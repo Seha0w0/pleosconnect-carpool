@@ -1,8 +1,11 @@
 ﻿package com.example.pleosconnect
 
 import android.content.Context
+import android.media.AudioAttributes
+import android.media.SoundPool
 import android.os.Bundle
 import android.util.Log
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.animation.AnimatedContent
@@ -14,16 +17,19 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateOffsetAsState
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
@@ -37,8 +43,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -46,15 +56,22 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -62,12 +79,15 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Typography
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -92,12 +112,17 @@ import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
@@ -112,6 +137,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.zIndex
 import ai.pleos.playground.vehicle.Vehicle
 import ai.pleos.playground.vehicle.listener.DistanceDrivenListener
 import java.time.LocalDate
@@ -124,8 +150,10 @@ import kotlin.math.cos
 import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.pow
+import kotlin.math.roundToInt
 import kotlin.math.sign
 import kotlin.math.sin
+import kotlin.random.Random
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
@@ -203,6 +231,7 @@ class MainActivity : ComponentActivity() {
     private var selectedRegion by mutableStateOf(FareRegion.SEOUL)
     private var selectedSurcharge by mutableStateOf(SurchargeMode.Normal)
     private var selectedTheme by mutableStateOf(MeshTheme.Pearl)
+    private var homeInitialPage by mutableIntStateOf(0)
 
     private var currentFare by mutableIntStateOf(0)
     private var isRunning by mutableStateOf(false)
@@ -270,11 +299,15 @@ class MainActivity : ComponentActivity() {
                 globalNoticeText = globalNoticeText,
                 selectedPassengerName = selectedPassengerName,
                 selectedHistoryMonth = selectedHistoryMonth,
+                homeInitialPage = homeInitialPage,
                 onPassengerNameChange = { passengerName = it },
                 onStart = { startRide() },
                 onStop = { stopRide() },
                 onTestDrive = { testDrive131m() },
-                onGoHome = { screen = AppScreen.Home },
+                onGoHome = {
+                    homeInitialPage = 0
+                    screen = AppScreen.Home
+                },
                 onGoHistory = {
                     historyWidgetSelectionMode = false
                     selectedWidgetPassengerName = null
@@ -316,6 +349,7 @@ class MainActivity : ComponentActivity() {
                     selectedRecord = it
                     screen = AppScreen.Receipt
                 },
+                onShredRecord = { shredRideRecord(it) },
                 onGoWidgetPicker = {
                     historyWidgetSelectionMode = true
                     selectedWidgetPassengerName = null
@@ -339,7 +373,31 @@ class MainActivity : ComponentActivity() {
                 onChangeHistoryMonth = { selectedHistoryMonth = it },
                 onGoPassengerHistoryBack = { screen = AppScreen.History },
                 onGoPassengerFullHistory = { screen = AppScreen.PassengerFullHistory },
-                onGoPassengerMonthHistory = { screen = AppScreen.PassengerHistory }
+                onGoPassengerMonthHistory = { screen = AppScreen.PassengerHistory },
+                onOpenPassengerReceiptBoard = { name ->
+                    selectedPassengerName = name
+                    screen = AppScreen.PassengerReceiptBoard
+                },
+                onGoChallenges = {
+                    screen = AppScreen.Challenges
+                },
+                onGoChallengeBadgeBoard = {
+                    screen = AppScreen.ChallengeBadgeBoard
+                },
+                onGoHomePassengerPage = {
+                    homeInitialPage = 1
+                    screen = AppScreen.Home
+                },
+                onGoInfo = {
+                    screen = AppScreen.AppInfo
+                },
+                onGoDonation = {
+                    screen = AppScreen.Donation
+                },
+                onGoSettingsPage = {
+                    homeInitialPage = 2
+                    screen = AppScreen.Home
+                }
             )
         }
     }
@@ -425,7 +483,8 @@ class MainActivity : ComponentActivity() {
             rideFare = pending.rideFare,
             tollFare = tollFare,
             extraFare = extraFare,
-            totalFare = pending.rideFare + tollFare + extraFare
+            totalFare = pending.rideFare + tollFare + extraFare,
+            themeCode = selectedTheme.code
         )
 
         rideRecords.add(0, record)
@@ -441,6 +500,11 @@ class MainActivity : ComponentActivity() {
         tollText = ""
         extraText = ""
         screen = AppScreen.Receipt
+    }
+
+    private fun shredRideRecord(record: RideRecord) {
+        rideRecords.removeAll { it.id == record.id }
+        saveRideRecords(rideRecords)
     }
 
     private fun addSelectedPassengerWidget() {
@@ -487,7 +551,8 @@ class MainActivity : ComponentActivity() {
                     rideFare = item.getInt("rideFare"),
                     tollFare = item.getInt("tollFare"),
                     extraFare = item.getInt("extraFare"),
-                    totalFare = item.getInt("totalFare")
+                    totalFare = item.getInt("totalFare"),
+                    themeCode = item.optString("themeCode", MeshTheme.Pearl.code)
                 )
             }
         }.getOrDefault(emptyList())
@@ -508,6 +573,7 @@ class MainActivity : ComponentActivity() {
                     .put("tollFare", record.tollFare)
                     .put("extraFare", record.extraFare)
                     .put("totalFare", record.totalFare)
+                    .put("themeCode", record.themeCode)
             )
         }
         getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -606,6 +672,7 @@ private fun CarpoolMeterApp(
     globalNoticeText: String?,
     selectedPassengerName: String?,
     selectedHistoryMonth: YearMonth,
+    homeInitialPage: Int,
     onPassengerNameChange: (String) -> Unit,
     onStart: () -> Unit,
     onStop: () -> Unit,
@@ -622,6 +689,7 @@ private fun CarpoolMeterApp(
     onExtraChange: (String) -> Unit,
     onSaveRide: () -> Unit,
     onSelectRecord: (RideRecord) -> Unit,
+    onShredRecord: (RideRecord) -> Unit,
     onGoWidgetPicker: () -> Unit,
     onSelectWidgetPassenger: (String) -> Unit,
     onAddWidgetPassenger: () -> Unit,
@@ -631,7 +699,14 @@ private fun CarpoolMeterApp(
     onChangeHistoryMonth: (YearMonth) -> Unit,
     onGoPassengerHistoryBack: () -> Unit,
     onGoPassengerFullHistory: () -> Unit,
-    onGoPassengerMonthHistory: () -> Unit
+    onGoPassengerMonthHistory: () -> Unit,
+    onOpenPassengerReceiptBoard: (String) -> Unit,
+    onGoChallenges: () -> Unit,
+    onGoChallengeBadgeBoard: () -> Unit,
+    onGoHomePassengerPage: () -> Unit,
+    onGoInfo: () -> Unit,
+    onGoDonation: () -> Unit,
+    onGoSettingsPage: () -> Unit
 ) {
     LaunchedEffect(globalNoticeText) {
         if (globalNoticeText != null) {
@@ -663,9 +738,14 @@ private fun CarpoolMeterApp(
                         .fillMaxSize()
                         .background(AppBg)
                 ) {
+                    val appBackgroundTheme = if (screen == AppScreen.Receipt) {
+                        selectedRecord?.receiptThemeOr(selectedTheme) ?: selectedTheme
+                    } else {
+                        selectedTheme
+                    }
                     AppMeshBackground(
-                        selectedTheme = selectedTheme,
-                        overlayAlpha = if (screen == AppScreen.Receipt) selectedTheme.receiptOuterOverlayAlpha() else selectedTheme.backgroundOverlayAlpha()
+                        selectedTheme = appBackgroundTheme,
+                        overlayAlpha = if (screen == AppScreen.Receipt) appBackgroundTheme.receiptOuterOverlayAlpha() else appBackgroundTheme.backgroundOverlayAlpha()
                     )
                     AnimatedContent(
                         targetState = screen,
@@ -700,6 +780,7 @@ private fun CarpoolMeterApp(
                                 selectedRegion = selectedRegion,
                                 selectedSurcharge = selectedSurcharge,
                                 selectedTheme = selectedTheme,
+                                initialPage = homeInitialPage,
                                 records = records,
                                 passengerWidgets = passengerWidgets,
                                 onPassengerNameChange = onPassengerNameChange,
@@ -711,7 +792,18 @@ private fun CarpoolMeterApp(
                                 onRemovePassengerWidget = onRemovePassengerWidget,
                                 onGoFareSettings = onGoFareSettings,
                                 onGoThemeSettings = onGoThemeSettings,
-                                onSelectSurcharge = onSelectSurcharge
+                                onSelectSurcharge = onSelectSurcharge,
+                                onOpenPassengerReceiptBoard = onOpenPassengerReceiptBoard,
+                                onGoChallenges = onGoChallenges,
+                                onGoInfo = onGoInfo,
+                                onGoDonation = onGoDonation
+                            )
+                        } else if (targetScreen == AppScreen.PassengerReceiptBoard) {
+                            PassengerReceiptBoardScreen(
+                                passengerName = selectedPassengerName,
+                                records = records,
+                                selectedTheme = selectedTheme,
+                                onGoBack = onGoHomePassengerPage
                             )
                         } else {
                             BouncyScrollableColumn(
@@ -765,7 +857,8 @@ private fun CarpoolMeterApp(
                                         record = selectedRecord,
                                         selectedTheme = selectedTheme,
                                         onGoHistory = onGoHistory,
-                                        onGoHome = onGoHome
+                                        onGoHome = onGoHome,
+                                        onShredRecord = onShredRecord
                                     )
 
                                     AppScreen.FareSettings -> FareSettingsScreen(
@@ -780,6 +873,27 @@ private fun CarpoolMeterApp(
                                         onGoHome = onGoHome
                                     )
 
+                                    AppScreen.Challenges -> ChallengesScreen(
+                                        records = records,
+                                        onGoHome = onGoHomePassengerPage,
+                                        onOpenBadgeBoard = onGoChallengeBadgeBoard
+                                    )
+
+                                    AppScreen.ChallengeBadgeBoard -> ChallengeBadgeBoardScreen(
+                                        records = records,
+                                        onGoBack = onGoChallenges
+                                    )
+
+                                    AppScreen.AppInfo -> AppInfoScreen(
+                                        selectedTheme = selectedTheme,
+                                        onGoBack = onGoSettingsPage
+                                    )
+
+                                    AppScreen.Donation -> DonationScreen(
+                                        onGoBack = onGoSettingsPage
+                                    )
+
+                                    AppScreen.PassengerReceiptBoard -> Unit
                                     AppScreen.Home -> Unit
                                 }
                             }
@@ -924,6 +1038,7 @@ private fun HomeScreen(
     selectedRegion: FareRegion,
     selectedSurcharge: SurchargeMode,
     selectedTheme: MeshTheme,
+    initialPage: Int,
     records: List<RideRecord>,
     passengerWidgets: List<String>,
     onPassengerNameChange: (String) -> Unit,
@@ -935,7 +1050,11 @@ private fun HomeScreen(
     onRemovePassengerWidget: (String) -> Unit,
     onGoFareSettings: () -> Unit,
     onGoThemeSettings: () -> Unit,
-    onSelectSurcharge: (SurchargeMode) -> Unit
+    onSelectSurcharge: (SurchargeMode) -> Unit,
+    onOpenPassengerReceiptBoard: (String) -> Unit,
+    onGoChallenges: () -> Unit,
+    onGoInfo: () -> Unit,
+    onGoDonation: () -> Unit
 ) {
     var topNoticeVisible by remember { mutableStateOf(false) }
     var passengerDialogVisible by remember { mutableStateOf(false) }
@@ -945,7 +1064,13 @@ private fun HomeScreen(
         animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
         label = "passengerDialogBlur"
     )
-    val pagerState = rememberPagerState(pageCount = { 3 })
+    val pagerState = rememberPagerState(initialPage = initialPage, pageCount = { 3 })
+
+    LaunchedEffect(initialPage) {
+        if (pagerState.currentPage != initialPage) {
+            pagerState.scrollToPage(initialPage)
+        }
+    }
 
     LaunchedEffect(topNoticeVisible) {
         if (topNoticeVisible) {
@@ -1073,7 +1198,9 @@ private fun HomeScreen(
                             passengerWidgets = passengerWidgets,
                             currentPage = pagerState.currentPage,
                             onAddClick = onGoWidgetPicker,
-                            onRemovePassengerWidget = onRemovePassengerWidget
+                            onRemovePassengerWidget = onRemovePassengerWidget,
+                            onPassengerClick = onOpenPassengerReceiptBoard,
+                            onGoChallenges = onGoChallenges
                         )
 
                         else -> HomeQuickSettingsPage(
@@ -1084,7 +1211,9 @@ private fun HomeScreen(
                             currentPage = pagerState.currentPage,
                             onGoFareSettings = onGoFareSettings,
                             onGoThemeSettings = onGoThemeSettings,
-                            onGoHistory = onGoHistory
+                            onGoHistory = onGoHistory,
+                            onGoInfo = onGoInfo,
+                            onGoDonation = onGoDonation
                         )
                     }
                 }
@@ -1118,10 +1247,21 @@ private fun PassengerWidgetPage(
     passengerWidgets: List<String>,
     currentPage: Int,
     onAddClick: () -> Unit,
-    onRemovePassengerWidget: (String) -> Unit
+    onRemovePassengerWidget: (String) -> Unit,
+    onPassengerClick: (String) -> Unit,
+    onGoChallenges: () -> Unit
 ) {
     var deleteTargetName by remember { mutableStateOf<String?>(null) }
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+    val bounceOffset = remember { Animatable(0f) }
     val recentCutoffDate = LocalDate.now().minusDays(30)
+    val currentMonth = YearMonth.now()
+    val monthlyRecords = records.filter { record ->
+        record.recordDateOrNull()?.let { YearMonth.from(it) == currentMonth } == true
+    }
+    val monthlyRevenue = monthlyRecords.sumOf { it.totalFare }
+    val monthlyDistance = monthlyRecords.sumOf { it.distanceKm.toDouble() }.toFloat()
     val recentPassengerGroups = records
         .filter { record ->
             record.recordDateOrNull()?.let { !it.isBefore(recentCutoffDate) } == true
@@ -1137,104 +1277,164 @@ private fun PassengerWidgetPage(
             compareByDescending<Pair<String, List<RideRecord>>> { it.second.firstOrNull()?.recordDateOrNull() }
                 .thenByDescending { it.second.firstOrNull()?.endTime.orEmpty() }
         )
+    val bounceConnection = remember(listState) {
+        object : NestedScrollConnection {
+            override fun onPostScroll(
+                consumed: Offset,
+                available: Offset,
+                source: NestedScrollSource
+            ): Offset {
+                val pullingDownAtTop = !listState.canScrollBackward && available.y > 0f
+                val pullingUpAtBottom = !listState.canScrollForward && available.y < 0f
 
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = G2RoundedCornerShape(28.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-    ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 22.dp, vertical = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            Text(text = "최근 손님", color = DarkText, fontSize = 32.sp, fontWeight = FontWeight.Black)
-            Text(text = "최근 30일 안의 영수증을 빠르게 열어볼 수 있어요", color = GrayText, fontSize = 18.sp, fontWeight = FontWeight.Medium)
+                if (pullingDownAtTop || pullingUpAtBottom) {
+                    scope.launch {
+                        bounceOffset.snapTo(bounceOffset.value + available.y * 0.20f)
+                    }
+                }
+
+                return Offset.Zero
+            }
+
+            override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
+                bounceOffset.animateTo(
+                    targetValue = 0f,
+                    animationSpec = spring(
+                        dampingRatio = 0.82f,
+                        stiffness = Spring.StiffnessLow
+                    )
+                )
+                return Velocity.Zero
+            }
         }
     }
 
-    BouncyScrollableColumn(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(500.dp),
+    Column(
+        modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        if (recentPassengerGroups.isEmpty()) {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = G2RoundedCornerShape(26.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White),
-                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE8ECF4)),
-                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = G2RoundedCornerShape(28.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 22.dp, vertical = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                Text(
-                    text = "최근 카풀했던 사람의 이름이 표시됩니다",
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 28.dp, vertical = 80.dp),
-                    color = GrayText,
-                    fontSize = 22.sp,
-                    fontWeight = FontWeight.Bold,
-                    textAlign = TextAlign.Center
-                )
+                Text(text = "최근 손님", color = DarkText, fontSize = 32.sp, fontWeight = FontWeight.Black)
+                Text(text = "최근 30일 안의 영수증을 빠르게 열어볼 수 있어요", color = GrayText, fontSize = 18.sp, fontWeight = FontWeight.Medium)
             }
-        } else {
-            recentPassengerGroups.forEach { (name, passengerRecords) ->
-                val latest = passengerRecords.first()
-                val totalFare = passengerRecords.sumOf { it.totalFare }
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = G2RoundedCornerShape(26.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color.White),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE8ECF4)),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 22.dp, vertical = 20.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(
-                            modifier = Modifier.weight(1f),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
+        }
+
+        MonthlyRevenueSummaryCard(
+            revenue = monthlyRevenue,
+            rideCount = monthlyRecords.size,
+            distanceKm = monthlyDistance
+        )
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .nestedScroll(bounceConnection)
+                .clipToBounds()
+        ) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer { translationY = bounceOffset.value },
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                if (recentPassengerGroups.isEmpty()) {
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = G2RoundedCornerShape(26.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color.White),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE8ECF4)),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
                         ) {
-                            Text(text = "$name 손님", color = DarkText, fontSize = 24.sp, fontWeight = FontWeight.Black)
                             Text(
-                                text = "총 ${passengerRecords.size}회 이용 · 최근 ${latest.date} ${latest.endTime}",
+                                text = "최근 카풀했던 사람의 이름이 표시됩니다",
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 28.dp, vertical = 80.dp),
                                 color = GrayText,
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.Medium
+                                fontSize = 22.sp,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center
                             )
                         }
-                        Text(
-                            text = "${totalFare.formatWon()}원",
-                            color = PrimaryBlue,
-                            fontSize = 24.sp,
-                            fontWeight = FontWeight.Black
-                        )
+                    }
+                } else {
+                    items(
+                        items = recentPassengerGroups,
+                        key = { it.first }
+                    ) { (name, passengerRecords) ->
+                        val latest = passengerRecords.first()
+                        val totalFare = passengerRecords.sumOf { it.totalFare }
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onPassengerClick(name) },
+                            shape = G2RoundedCornerShape(26.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color.White),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE8ECF4)),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 22.dp, vertical = 20.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(
+                                    modifier = Modifier.weight(1f),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text(text = "$name 손님", color = DarkText, fontSize = 24.sp, fontWeight = FontWeight.Black)
+                                    Text(
+                                        text = "총 ${passengerRecords.size}회 이용 · 최근 ${latest.date} ${latest.endTime}",
+                                        color = GrayText,
+                                        fontSize = 16.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                                Text(
+                                    text = "${totalFare.formatWon()}원",
+                                    color = PrimaryBlue,
+                                    fontSize = 24.sp,
+                                    fontWeight = FontWeight.Black
+                                )
+                            }
+                        }
                     }
                 }
             }
         }
-    }
 
-    Button(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(72.dp),
-        onClick = onAddClick,
-        shape = G2RoundedCornerShape(999.dp),
-        elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp, pressedElevation = 0.dp),
-        colors = ButtonDefaults.buttonColors(containerColor = PrimaryBlue, contentColor = Color.White)
-    ) {
-        Text(text = "+", fontSize = 38.sp, fontWeight = FontWeight.Black)
-    }
+        Button(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(72.dp),
+            onClick = onAddClick,
+            shape = G2RoundedCornerShape(999.dp),
+            elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp, pressedElevation = 0.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = PrimaryBlue, contentColor = Color.White)
+        ) {
+            Text(text = "+", fontSize = 38.sp, fontWeight = FontWeight.Black)
+        }
 
-    HomePagerIndicator(
-        currentPage = currentPage,
-        pageCount = 3,
-        modifier = Modifier.fillMaxWidth()
-    )
+        ChallengeEntryButton(onClick = onGoChallenges)
+
+        HomePagerIndicator(
+            currentPage = currentPage,
+            pageCount = 3,
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
 
     deleteTargetName?.let { name ->
         ConfirmDeleteWidgetDialog(
@@ -1243,6 +1443,486 @@ private fun PassengerWidgetPage(
                 deleteTargetName = null
             },
             onDismiss = { deleteTargetName = null }
+        )
+    }
+}
+
+@Composable
+private fun MonthlyRevenueSummaryCard(
+    revenue: Int,
+    rideCount: Int,
+    distanceKm: Float
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = G2RoundedCornerShape(28.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.82f)),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.58f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 24.dp, vertical = 18.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(text = "이번 달 누적 수익", color = DarkText, fontSize = 21.sp, fontWeight = FontWeight.Black)
+                Text(
+                    text = "총 ${rideCount}회 · ${"%.1f".format(distanceKm)}km",
+                    color = GrayText,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+            Text(
+                text = "${revenue.formatWon()}원",
+                modifier = Modifier.padding(start = 18.dp),
+                color = PrimaryBlue,
+                fontSize = 30.sp,
+                fontWeight = FontWeight.Black,
+                textAlign = TextAlign.End
+            )
+        }
+    }
+}
+
+@Composable
+private fun ChallengeEntryButton(onClick: () -> Unit) {
+    Button(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(72.dp),
+        onClick = onClick,
+        shape = G2RoundedCornerShape(999.dp),
+        elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp, pressedElevation = 0.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = Color.White.copy(alpha = 0.94f),
+            contentColor = DarkText
+        )
+    ) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Image(
+                painter = painterResource(id = R.drawable.ic_challenge_badge),
+                contentDescription = null,
+                modifier = Modifier.size(46.dp)
+            )
+            Text(text = "도전 과제", fontSize = 22.sp, fontWeight = FontWeight.Black)
+        }
+    }
+}
+
+@Composable
+private fun ChallengesScreen(
+    records: List<RideRecord>,
+    onGoHome: () -> Unit,
+    onOpenBadgeBoard: () -> Unit
+) {
+    val challenges = buildChallengeItems(records)
+    val completedCount = challenges.count { it.progress >= 1f }
+
+    TopBar()
+    PageHeader(
+        title = "도전 과제",
+        subtitle = "카풀 기록에 따라 자동으로 완수율이 올라가요."
+    )
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onOpenBadgeBoard() },
+        shape = G2RoundedCornerShape(30.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE8ECF4)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 24.dp, vertical = 24.dp),
+            horizontalArrangement = Arrangement.spacedBy(18.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Image(
+                painter = painterResource(id = R.drawable.ic_challenge_badge),
+                contentDescription = null,
+                modifier = Modifier.size(86.dp)
+            )
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(text = "카풀 배지 보드", color = DarkText, fontSize = 30.sp, fontWeight = FontWeight.Black)
+                Text(
+                    text = "완료 $completedCount/${challenges.size}개 · 완료한 주행 ${records.size}회",
+                    color = GrayText,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    text = "눌러서 완료한 배지를 볼 수 있어요",
+                    color = PrimaryBlue,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Black
+                )
+            }
+        }
+    }
+
+    challenges.forEach { challenge ->
+        ChallengeCard(challenge = challenge)
+    }
+
+    OrangeButton(text = "돌아가기", modifier = Modifier.fillMaxWidth(), onClick = onGoHome)
+}
+
+@Composable
+private fun ChallengeCard(challenge: ChallengeItem) {
+    val animatedProgress by animateFloatAsState(
+        targetValue = challenge.progress.coerceIn(0f, 1f),
+        animationSpec = tween(durationMillis = 620, easing = FastOutSlowInEasing),
+        label = "challengeProgress"
+    )
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = G2RoundedCornerShape(28.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE8ECF4)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 22.dp, vertical = 20.dp),
+            horizontalArrangement = Arrangement.spacedBy(18.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Image(
+                painter = painterResource(id = challenge.iconRes()),
+                contentDescription = null,
+                modifier = Modifier.size(84.dp)
+            )
+
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.Top
+                ) {
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        Text(text = challenge.title, color = DarkText, fontSize = 24.sp, fontWeight = FontWeight.Black)
+                        Text(text = challenge.description, color = GrayText, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                    }
+                    Text(
+                        text = "${(challenge.progress.coerceIn(0f, 1f) * 100).roundToInt()}%",
+                        color = PrimaryBlue,
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Black
+                    )
+                }
+
+                ChallengeProgressBar(progress = animatedProgress)
+
+                Text(
+                    text = challenge.progressLabel,
+                    color = if (challenge.progress >= 1f) PrimaryBlue else GrayText,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Black
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChallengeBadgeBoardScreen(
+    records: List<RideRecord>,
+    onGoBack: () -> Unit
+) {
+    val challenges = buildChallengeItems(records)
+    val completedChallenges = challenges.filter { it.progress >= 1f }
+
+    TopBar()
+    PageHeader(
+        title = "카풀 배지 보드",
+        subtitle = "완료한 도전 과제만 모아봤어요."
+    )
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = G2RoundedCornerShape(30.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE8ECF4)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 24.dp, vertical = 24.dp),
+            horizontalArrangement = Arrangement.spacedBy(18.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Image(
+                painter = painterResource(id = R.drawable.ic_challenge_badge),
+                contentDescription = null,
+                modifier = Modifier.size(88.dp)
+            )
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "완료 ${completedChallenges.size}/${challenges.size}개",
+                    color = DarkText,
+                    fontSize = 32.sp,
+                    fontWeight = FontWeight.Black
+                )
+                Text(
+                    text = "완료한 배지만 이 보드에 정리됩니다.",
+                    color = GrayText,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+        }
+    }
+
+    if (completedChallenges.isEmpty()) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = G2RoundedCornerShape(30.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE8ECF4)),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+        ) {
+            Text(
+                text = "아직 완료한 도전 과제가 없어요.",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp, vertical = 72.dp),
+                color = GrayText,
+                fontSize = 22.sp,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center
+            )
+        }
+    } else {
+        completedChallenges.chunked(3).forEach { rowItems ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                rowItems.forEach { challenge ->
+                    CompletedBadgeItem(
+                        challenge = challenge,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                repeat(3 - rowItems.size) {
+                    Spacer(modifier = Modifier.weight(1f))
+                }
+            }
+        }
+    }
+
+    OrangeButton(text = "도전 과제로 돌아가기", modifier = Modifier.fillMaxWidth(), onClick = onGoBack)
+}
+
+@Composable
+private fun ChallengeBadgeBoardDialog(
+    completedChallenges: List<ChallengeItem>,
+    onDismiss: () -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = G2RoundedCornerShape(34.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE8ECF4)),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(18.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Image(
+                        painter = painterResource(id = R.drawable.ic_challenge_badge),
+                        contentDescription = null,
+                        modifier = Modifier.size(72.dp)
+                    )
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(text = "카풀 배지 보드", color = DarkText, fontSize = 30.sp, fontWeight = FontWeight.Black)
+                        Text(
+                            text = "완료한 도전 과제를 모아봤어요",
+                            color = GrayText,
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+
+                if (completedChallenges.isEmpty()) {
+                    Text(
+                        text = "아직 완료한 도전 과제가 없어요.",
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 42.dp),
+                        color = GrayText,
+                        fontSize = 21.sp,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center
+                    )
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.height(520.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        items(completedChallenges.chunked(3)) { rowItems ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                rowItems.forEach { challenge ->
+                                    CompletedBadgeItem(
+                                        challenge = challenge,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                                repeat(3 - rowItems.size) {
+                                    Spacer(modifier = Modifier.weight(1f))
+                                }
+                            }
+                        }
+                    }
+                }
+
+                OrangeButton(text = "닫기", modifier = Modifier.fillMaxWidth(), onClick = onDismiss)
+            }
+        }
+    }
+}
+
+@Composable
+private fun CompletedBadgeItem(challenge: ChallengeItem, modifier: Modifier = Modifier) {
+    var visible by remember(challenge.title) { mutableStateOf(false) }
+    LaunchedEffect(challenge.title) {
+        kotlinx.coroutines.delay(80L)
+        visible = true
+    }
+    val springScale by animateFloatAsState(
+        targetValue = if (visible) 1f else 0.72f,
+        animationSpec = spring(
+            dampingRatio = 0.58f,
+            stiffness = Spring.StiffnessMediumLow
+        ),
+        label = "completedBadgeScale"
+    )
+    val springAlpha by animateFloatAsState(
+        targetValue = if (visible) 1f else 0f,
+        animationSpec = spring(
+            dampingRatio = 0.75f,
+            stiffness = Spring.StiffnessMediumLow
+        ),
+        label = "completedBadgeAlpha"
+    )
+
+    Card(
+        modifier = modifier
+            .height(174.dp)
+            .graphicsLayer {
+                scaleX = springScale
+                scaleY = springScale
+                alpha = springAlpha
+            },
+        shape = G2RoundedCornerShape(26.dp),
+        colors = CardDefaults.cardColors(containerColor = Panel),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE1E7F0)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 12.dp, vertical = 14.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Image(
+                painter = painterResource(id = challenge.iconRes()),
+                contentDescription = null,
+                modifier = Modifier
+                    .size(96.dp)
+                    .graphicsLayer {
+                        scaleX = 1.28f
+                        scaleY = 1.28f
+                    }
+            )
+            Text(
+                text = challenge.title,
+                color = DarkText,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Black,
+                textAlign = TextAlign.Center,
+                maxLines = 2
+            )
+            Text(
+                text = "완료",
+                color = PrimaryBlue,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Black
+            )
+        }
+    }
+}
+
+private fun ChallengeItem.iconRes(): Int =
+    when (title) {
+        "첫 영수증 발급" -> R.drawable.challenge_icon_09
+        "단골 손님 메모리" -> R.drawable.challenge_icon_02
+        "최근 30일 카풀러" -> R.drawable.challenge_icon_19
+        "100km 동행" -> R.drawable.challenge_icon_11
+        "10만원 정산왕" -> R.drawable.challenge_icon_16
+        "1시간 안전 운행" -> R.drawable.challenge_icon_20
+        "나이트 영수증 컬렉터" -> R.drawable.challenge_icon_21
+        "장거리 동행" -> R.drawable.challenge_icon_10
+        "동네 한 바퀴" -> R.drawable.challenge_icon_14
+        "통행료 정산러" -> R.drawable.challenge_icon_07
+        "추가요금 협상가" -> R.drawable.challenge_icon_05
+        "만원 넘는 카풀" -> R.drawable.challenge_icon_08
+        "테마 수집가" -> R.drawable.challenge_icon_03
+        "찐 단골 인증" -> R.drawable.challenge_icon_13
+        "하루 카풀 챌린지" -> R.drawable.challenge_icon_06
+        else -> R.drawable.ic_challenge_badge
+    }
+
+@Composable
+private fun ChallengeProgressBar(progress: Float) {
+    val shape = G2RoundedCornerShape(999.dp)
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(18.dp)
+            .background(Panel, shape)
+            .border(1.dp, Color(0xFFE1E7F0), shape)
+            .clip(shape)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(progress.coerceIn(0f, 1f))
+                .height(18.dp)
+                .background(
+                    Brush.horizontalGradient(
+                        colors = listOf(PrimaryBlue, Color(0xFF49A8FF))
+                    ),
+                    shape
+                )
         )
     }
 }
@@ -1374,7 +2054,8 @@ private fun HomeOverviewPage(
     currentPage: Int,
     onGoFareSettings: () -> Unit,
     onGoThemeSettings: () -> Unit,
-    onGoHistory: () -> Unit
+    onGoHistory: () -> Unit,
+    onGoInfo: () -> Unit
 ) {
     Card(
         modifier = Modifier
@@ -1486,49 +2167,633 @@ private fun HomeQuickSettingsPage(
     currentPage: Int,
     onGoFareSettings: () -> Unit,
     onGoThemeSettings: () -> Unit,
-    onGoHistory: () -> Unit
+    onGoHistory: () -> Unit,
+    onGoInfo: () -> Unit,
+    onGoDonation: () -> Unit
 ) {
-    Card(
+    var autoSurchargeEnabled by remember { mutableStateOf(false) }
+    var showResetDialog by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+
+    BouncyScrollableColumn(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(260.dp),
+            shape = G2RoundedCornerShape(28.dp),
+            colors = CardDefaults.cardColors(containerColor = GlassWhite),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(26.dp),
+                verticalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(text = "설정 요약", color = DarkText, fontSize = 34.sp, fontWeight = FontWeight.Black)
+                    Text(
+                        text = if (isRunning) "주행 중에는 요금제를 바꾸지 않아요" else "카풀미터기 설정을 빠르게 확인해요",
+                        color = GrayText,
+                        fontSize = 19.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    DashboardTile(
+                        title = "지역",
+                        value = selectedRegion.displayName,
+                        modifier = Modifier.weight(1f)
+                    )
+                    DashboardTile(
+                        title = "할증",
+                        value = selectedSurcharge.buttonText,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+        }
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = G2RoundedCornerShape(28.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Text(text = "현재 요금 규칙", color = DarkText, fontSize = 24.sp, fontWeight = FontWeight.Black)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    DashboardTile(
+                        title = "기본 요금",
+                        value = "${farePolicy.baseFare.formatWon()}원",
+                        modifier = Modifier.weight(1f)
+                    )
+                    DashboardTile(
+                        title = "거리 요금",
+                        value = "${farePolicy.stepDistanceMeters.toInt()}m",
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                Text(
+                    text = "${farePolicy.baseDistanceKm}km 이후 ${farePolicy.stepDistanceMeters.toInt()}m마다 ${farePolicy.stepFare}원씩 계산돼요",
+                    color = GrayText,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+        }
+
+        DeveloperSupportBanner(
+            onClick = onGoDonation
+        )
+
+        SmartSettingsCard(
+            autoSurchargeEnabled = autoSurchargeEnabled,
+            onAutoSurchargeChange = { autoSurchargeEnabled = it }
+        )
+
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            GhostButton(text = "정보", modifier = Modifier.fillMaxWidth(), onClick = onGoInfo)
+            GhostButton(text = "전체 내역 초기화", modifier = Modifier.fillMaxWidth(), onClick = { showResetDialog = true })
+        }
+
+        HomePagerIndicator(
+            currentPage = currentPage,
+            pageCount = 3,
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
+
+    if (showResetDialog) {
+        ResetHistoryDialog(
+            onDismiss = { showResetDialog = false },
+            onDelete = {
+                showResetDialog = false
+                Toast.makeText(context, "전체 내역 초기화 기능은 준비 중입니다", Toast.LENGTH_SHORT).show()
+            }
+        )
+    }
+}
+
+@Composable
+private fun ResetHistoryDialog(
+    onDismiss: () -> Unit,
+    onDelete: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        shape = G2RoundedCornerShape(34.dp),
+        containerColor = Color.White,
+        title = {
+            Text(
+                text = "!",
+                modifier = Modifier.fillMaxWidth(),
+                color = Color.Red,
+                fontSize = 36.sp,
+                fontWeight = FontWeight.Black,
+                textAlign = TextAlign.Center
+            )
+        },
+        text = {
+            Text(
+                text = "모든 내역을 삭제하시겠습니까?",
+                modifier = Modifier.fillMaxWidth(),
+                color = DarkText,
+                fontSize = 24.sp,
+                fontWeight = FontWeight.Black,
+                textAlign = TextAlign.Center,
+                lineHeight = 30.sp
+            )
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(text = "취소", color = GrayText, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onDelete,
+                shape = G2RoundedCornerShape(999.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color.Red,
+                    contentColor = Color.White
+                ),
+                elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp, pressedElevation = 0.dp)
+            ) {
+                Text(text = "삭제", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Black)
+            }
+        }
+    )
+}
+
+@Composable
+private fun AppInfoScreen(
+    selectedTheme: MeshTheme,
+    onGoBack: () -> Unit
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(24.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(18.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(62.dp)
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = 0.92f))
+                    .border(1.dp, Color.White.copy(alpha = 0.76f), CircleShape)
+                    .clickable(onClick = onGoBack),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "←",
+                    color = DarkText,
+                    fontSize = 34.sp,
+                    fontWeight = FontWeight.Black,
+                    lineHeight = 34.sp
+                )
+            }
+            Text(
+                text = "정보",
+                color = DarkText,
+                fontSize = 40.sp,
+                fontWeight = FontWeight.Black
+            )
+        }
+
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(460.dp),
+            shape = G2RoundedCornerShape(42.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(G2RoundedCornerShape(42.dp))
+            ) {
+                Image(
+                    painter = painterResource(id = selectedTheme.drawableRes),
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.White.copy(alpha = 0.26f))
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.linearGradient(
+                                colors = listOf(
+                                    Color(0xFF2D7CFF).copy(alpha = 0.72f),
+                                    Color(0xFF53E0C6).copy(alpha = 0.62f),
+                                    Color(0xFFFFE178).copy(alpha = 0.52f),
+                                    Color(0xFFFF7FA5).copy(alpha = 0.56f)
+                                )
+                            )
+                        )
+                )
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    drawCircle(
+                        color = Color.White.copy(alpha = 0.33f),
+                        radius = size.minDimension * 0.48f,
+                        center = Offset(size.width * 0.82f, size.height * 0.12f)
+                    )
+                    drawCircle(
+                        color = Color(0xFF072E68).copy(alpha = 0.30f),
+                        radius = size.minDimension * 0.62f,
+                        center = Offset(size.width * 0.04f, size.height * 0.92f)
+                    )
+                    drawCircle(
+                        color = Color.White.copy(alpha = 0.20f),
+                        radius = size.minDimension * 0.42f,
+                        center = Offset(size.width * 0.52f, size.height * 0.56f)
+                    )
+                }
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(42.dp),
+                    verticalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "1.0",
+                        color = Color.White,
+                        fontSize = 96.sp,
+                        fontWeight = FontWeight.Black,
+                        lineHeight = 96.sp
+                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(
+                            text = "카풀 미터기",
+                            color = Color.White,
+                            fontSize = 50.sp,
+                            fontWeight = FontWeight.Black,
+                            lineHeight = 54.sp
+                        )
+                        Text(
+                            text = "Pleos Carpool Meter",
+                            color = Color.White.copy(alpha = 0.88f),
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = G2RoundedCornerShape(32.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.94f)),
+            border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.72f)),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 30.dp, vertical = 12.dp)
+            ) {
+                AppInfoRow(title = "소프트웨어 버전", value = "1.0.0")
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(Color(0xFFE2E5EA))
+                )
+                AppInfoRow(title = "개발자 문의", value = "appleslie0@gmail.com")
+            }
+        }
+    }
+}
+
+@Composable
+private fun AppInfoRow(title: String, value: String) {
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(280.dp),
-        shape = G2RoundedCornerShape(28.dp),
-        colors = CardDefaults.cardColors(containerColor = GlassWhite),
+            .padding(vertical = 24.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = title,
+            color = DarkText,
+            fontSize = 25.sp,
+            fontWeight = FontWeight.Black
+        )
+        Text(
+            text = value,
+            color = GrayText,
+            fontSize = 23.sp,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.End
+        )
+    }
+}
+
+private data class DonationItem(
+    val name: String,
+    val price: String,
+    val imageRes: Int
+)
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun DonationScreen(onGoBack: () -> Unit) {
+    val donationItems = remember {
+        listOf(
+            DonationItem("🍬 졸음 번쩍 껌 한 통", "1,000원", R.drawable.ggum),
+            DonationItem("☕ 시원한 아아 한잔", "1,500원", R.drawable.ice),
+            DonationItem("⚡ 시원한 에너지 드링크", "3,500원", R.drawable.monster),
+            DonationItem("🥪 가난한 편의점 샌드위치", "4,500원", R.drawable.sandwich),
+            DonationItem("🍕 야근엔 역시 피자", "15,000원", R.drawable.pizza),
+            DonationItem("🍗 야식 치킨 수혈", "20,000원", R.drawable.chicken),
+            DonationItem("⛽ 가득이요! VIP 주유권", "50,000원", R.drawable.gas)
+        )
+    }
+    val pagerState = rememberPagerState(pageCount = { donationItems.size })
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(22.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(18.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(62.dp)
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = 0.92f))
+                    .border(1.dp, Color.White.copy(alpha = 0.76f), CircleShape)
+                    .clickable(onClick = onGoBack),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "←",
+                    color = DarkText,
+                    fontSize = 34.sp,
+                    fontWeight = FontWeight.Black,
+                    lineHeight = 34.sp
+                )
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = "개발자 후원",
+                    color = DarkText,
+                    fontSize = 40.sp,
+                    fontWeight = FontWeight.Black
+                )
+                Text(
+                    text = "커피 한 잔만큼 앱이 더 부드러워져요",
+                    color = GrayText,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+        }
+
+        HorizontalPager(
+            state = pagerState,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(760.dp),
+            pageSpacing = 18.dp
+        ) { page ->
+            DonationCard(item = donationItems[page])
+        }
+
+        HomePagerIndicator(
+            currentPage = pagerState.currentPage,
+            pageCount = donationItems.size,
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
+}
+
+@Composable
+private fun DonationCard(item: DonationItem) {
+    Card(
+        modifier = Modifier.fillMaxSize(),
+        shape = G2RoundedCornerShape(42.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.94f)),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.78f)),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(26.dp),
+                .padding(30.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(text = "설정 요약", color = DarkText, fontSize = 34.sp, fontWeight = FontWeight.Black)
-                Text(
-                    text = if (isRunning) "주행 중에는 요금제를 바꾸지 않아요" else "카풀미터기 설정을 빠르게 확인해요",
-                    color = GrayText,
-                    fontSize = 19.sp,
-                    fontWeight = FontWeight.Medium
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(420.dp)
+                    .clip(G2RoundedCornerShape(34.dp))
+                    .background(
+                        Brush.linearGradient(
+                            colors = listOf(
+                                Color(0xFFFFF2E8),
+                                Color(0xFFFFD7EA),
+                                Color(0xFFE5F5FF),
+                                Color(0xFFEFFFFB)
+                            )
+                        )
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    drawCircle(
+                        color = Color.White.copy(alpha = 0.48f),
+                        radius = size.minDimension * 0.36f,
+                        center = Offset(size.width * 0.24f, size.height * 0.18f)
+                    )
+                    drawCircle(
+                        color = Color(0xFFFF9F65).copy(alpha = 0.26f),
+                        radius = size.minDimension * 0.34f,
+                        center = Offset(size.width * 0.86f, size.height * 0.18f)
+                    )
+                    drawCircle(
+                        color = Color(0xFF64D8FF).copy(alpha = 0.22f),
+                        radius = size.minDimension * 0.40f,
+                        center = Offset(size.width * 0.45f, size.height * 0.92f)
+                    )
+                }
+                Image(
+                    painter = painterResource(id = item.imageRes),
+                    contentDescription = null,
+                    modifier = Modifier.size(250.dp),
+                    contentScale = ContentScale.Fit
                 )
             }
-            Row(
+
+            Column(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                DashboardTile(
-                    title = "지역",
-                    value = selectedRegion.displayName,
-                    modifier = Modifier.weight(1f)
+                Text(
+                    text = item.name,
+                    color = DarkText,
+                    fontSize = 30.sp,
+                    fontWeight = FontWeight.Black,
+                    textAlign = TextAlign.Center,
+                    lineHeight = 36.sp
                 )
-                DashboardTile(
-                    title = "할증",
-                    value = selectedSurcharge.buttonText,
-                    modifier = Modifier.weight(1f)
+                Text(
+                    text = item.price,
+                    color = PrimaryBlue,
+                    fontSize = 42.sp,
+                    fontWeight = FontWeight.Black,
+                    textAlign = TextAlign.Center
+                )
+            }
+
+            OrangeButton(
+                text = "후원하기",
+                modifier = Modifier.fillMaxWidth(),
+                onClick = {}
+            )
+        }
+    }
+}
+
+private data class SupportSnack(
+    val label: String,
+    val imageRes: Int,
+    val onClick: () -> Unit = {}
+)
+
+@Composable
+private fun DeveloperSupportBanner(
+    onClick: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        shape = G2RoundedCornerShape(30.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(
+                    Brush.linearGradient(
+                        colors = listOf(
+                            Color(0xFFFFD7B8),
+                            Color(0xFFFF8E4D),
+                            Color(0xFFFF5F7A),
+                            Color(0xFFFFC0A6)
+                        )
+                    )
+                )
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.radialGradient(
+                            colors = listOf(
+                                Color.White.copy(alpha = 0.52f),
+                                Color.Transparent
+                            ),
+                            radius = 860f
+                        )
+                    )
+            )
+            Column(
+                modifier = Modifier.padding(horizontal = 22.dp, vertical = 22.dp),
+                verticalArrangement = Arrangement.spacedBy(18.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "🥺 불쌍한 밤샘 개발자를\n커피로 후원해 주세요 ☕",
+                    color = Color.White,
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.Black,
+                    textAlign = TextAlign.Center,
+                    lineHeight = 34.sp
                 )
             }
         }
     }
+}
 
+@Composable
+private fun SupportSnackButton(snack: SupportSnack) {
+    Card(
+        modifier = Modifier
+            .width(176.dp)
+            .height(158.dp)
+            .clickable(onClick = snack.onClick),
+        shape = G2RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.82f)),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.50f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(14.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Image(
+                painter = painterResource(id = snack.imageRes),
+                contentDescription = null,
+                modifier = Modifier.size(76.dp),
+                contentScale = ContentScale.Fit
+            )
+            Text(
+                text = snack.label,
+                color = DarkText,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Black,
+                textAlign = TextAlign.Center
+            )
+        }
+    }
+}
+
+@Composable
+private fun SmartSettingsCard(
+    autoSurchargeEnabled: Boolean,
+    onAutoSurchargeChange: (Boolean) -> Unit
+) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = G2RoundedCornerShape(28.dp),
@@ -1537,54 +2802,45 @@ private fun HomeQuickSettingsPage(
     ) {
         Column(
             modifier = Modifier.padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+            verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
-            Text(text = "현재 요금 규칙", color = DarkText, fontSize = 24.sp, fontWeight = FontWeight.Black)
+            Text(text = "스마트 설정", color = DarkText, fontSize = 26.sp, fontWeight = FontWeight.Black)
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                DashboardTile(
-                    title = "기본 요금",
-                    value = "${farePolicy.baseFare.formatWon()}원",
-                    modifier = Modifier.weight(1f)
-                )
-                DashboardTile(
-                    title = "거리 요금",
-                    value = "${farePolicy.stepDistanceMeters.toInt()}m",
-                    modifier = Modifier.weight(1f)
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(7.dp)
+                ) {
+                    Text(
+                        text = "⏰ 지역 및 시간 기반 자동 할증",
+                        color = DarkText,
+                        fontSize = 21.sp,
+                        fontWeight = FontWeight.Black
+                    )
+                    Text(
+                        text = "선택한 지역과 현재 시간을 인식해 할증 요금을 자동으로 적용합니다",
+                        color = GrayText,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Medium,
+                        lineHeight = 21.sp
+                    )
+                }
+                Switch(
+                    checked = autoSurchargeEnabled,
+                    onCheckedChange = onAutoSurchargeChange,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color.White,
+                        checkedTrackColor = PrimaryBlue,
+                        uncheckedThumbColor = Color.White,
+                        uncheckedTrackColor = Panel
+                    )
                 )
             }
-            Text(
-                text = "${farePolicy.baseDistanceKm}km 이후 ${farePolicy.stepDistanceMeters.toInt()}m마다 ${farePolicy.stepFare}원씩 계산돼요",
-                color = GrayText,
-                fontSize = 17.sp,
-                fontWeight = FontWeight.Medium
-            )
         }
     }
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = G2RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = GlassWhite),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-    ) {
-        Row(
-            modifier = Modifier.padding(8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            GhostButton(text = "요금제", modifier = Modifier.weight(1f), enabled = !isRunning, onClick = onGoFareSettings)
-            GhostButton(text = "테마", modifier = Modifier.weight(1f), onClick = onGoThemeSettings)
-            GhostButton(text = "내역 보기", modifier = Modifier.weight(1f), onClick = onGoHistory)
-        }
-    }
-
-    HomePagerIndicator(
-        currentPage = currentPage,
-        pageCount = 3,
-        modifier = Modifier.fillMaxWidth()
-    )
 }
 
 @Composable
@@ -2782,11 +4038,784 @@ private fun PassengerRideRecordCard(record: RideRecord, onClick: () -> Unit) {
 }
 
 @Composable
+private fun PassengerReceiptBoardScreen(
+    passengerName: String?,
+    records: List<RideRecord>,
+    selectedTheme: MeshTheme,
+    onGoBack: () -> Unit
+) {
+    val name = passengerName ?: return
+    val passengerRecords = records
+        .filter { it.passengerName.trim().ifBlank { "이름 없는" } == name }
+        .sortedWith(compareByDescending<RideRecord> { it.recordDateOrNull() }.thenByDescending { it.endTime })
+    val passengerTotalFare = passengerRecords.sumOf { it.totalFare }
+    var isAligned by remember { mutableStateOf(false) }
+    var detailState by remember { mutableStateOf<BoardDetailState?>(null) }
+    var detailVisible by remember { mutableStateOf(false) }
+
+    LaunchedEffect(detailVisible) {
+        if (!detailVisible && detailState != null) {
+            kotlinx.coroutines.delay(320L)
+            detailState = null
+        }
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            TopBar()
+            PassengerReceiptBoardHeader(
+                passengerName = name,
+                totalFare = passengerTotalFare
+            )
+
+        BoxWithConstraints(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .clip(G2RoundedCornerShape(34.dp))
+                .background(Color.White.copy(alpha = 0.18f))
+                .border(1.dp, Color.White.copy(alpha = 0.34f), G2RoundedCornerShape(34.dp))
+        ) {
+            val density = LocalDensity.current
+            val scope = rememberCoroutineScope()
+            val boardScrollState = rememberScrollState()
+            val boardBounceOffset = remember { Animatable(0f) }
+            val thumbnailWidth = 178.dp
+            val thumbnailHeight = 280.dp
+            val columnCount = when {
+                maxWidth >= 900.dp -> 4
+                maxWidth >= 620.dp -> 3
+                else -> 2
+            }
+            val boardContentHeight = receiptBoardContentHeight(
+                records = passengerRecords,
+                columnCount = columnCount,
+                thumbnailHeight = thumbnailHeight,
+                minHeight = maxHeight
+            )
+            val boardWidthPx = with(density) { maxWidth.toPx() }
+            val visibleBoardHeightPx = with(density) { maxHeight.toPx() }
+            val contentHeightPx = with(density) { boardContentHeight.toPx() }
+            val thumbnailWidthPx = with(density) { thumbnailWidth.toPx() }
+            val thumbnailHeightPx = with(density) { thumbnailHeight.toPx() }
+            val maxTravelX = (boardWidthPx - thumbnailWidthPx).coerceAtLeast(1f)
+            val maxTravelY = (contentHeightPx - thumbnailHeightPx).coerceAtLeast(1f)
+            val boardStates = remember(passengerRecords.joinToString(separator = "|") { it.id }, columnCount, boardContentHeight) {
+                createReceiptBoardStates(
+                    records = passengerRecords,
+                    columnCount = columnCount,
+                    contentHeight = boardContentHeight,
+                    thumbnailHeight = thumbnailHeight
+                )
+            }
+            val boardBounceConnection = remember(boardScrollState) {
+                object : NestedScrollConnection {
+                    override fun onPostScroll(
+                        consumed: Offset,
+                        available: Offset,
+                        source: NestedScrollSource
+                    ): Offset {
+                        val pullingDownAtTop = !boardScrollState.canScrollBackward && available.y > 0f
+                        val pullingUpAtBottom = !boardScrollState.canScrollForward && available.y < 0f
+
+                        if (pullingDownAtTop || pullingUpAtBottom) {
+                            scope.launch {
+                                val next = boardBounceOffset.value + available.y * 0.20f
+                                boardBounceOffset.snapTo(next)
+                            }
+                        }
+
+                        return Offset.Zero
+                    }
+
+                    override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
+                        boardBounceOffset.animateTo(
+                            targetValue = 0f,
+                            animationSpec = spring(
+                                dampingRatio = 0.82f,
+                                stiffness = Spring.StiffnessLow
+                            )
+                        )
+                        return Velocity.Zero
+                    }
+                }
+            }
+
+            if (passengerRecords.isEmpty()) {
+                Text(
+                    text = "아직 붙여둘 영수증이 없습니다.",
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .padding(horizontal = 32.dp),
+                    color = GrayText,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .nestedScroll(boardBounceConnection)
+                        .clipToBounds()
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer { translationY = boardBounceOffset.value }
+                            .verticalScroll(boardScrollState)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(boardContentHeight)
+                        ) {
+                            TimelineBackground(
+                                states = boardStates,
+                                maxHeight = boardContentHeight,
+                                receiptHeight = thumbnailHeight
+                            )
+
+                            boardStates.forEachIndexed { index, state ->
+                                DraggableReceiptThumbnail(
+                                    state = state,
+                                    selectedTheme = selectedTheme,
+                                    index = index,
+                                    thumbnailWidth = thumbnailWidth,
+                                    thumbnailHeight = thumbnailHeight,
+                                    maxTravelX = maxTravelX,
+                                    maxTravelY = maxTravelY,
+                                    visibleBoardHeight = visibleBoardHeightPx,
+                                    scrollOffsetPx = boardScrollState.value.toFloat() - boardBounceOffset.value,
+                                    isAligned = isAligned,
+                                    columnCount = columnCount,
+                                    onOpenDetail = { transformOrigin ->
+                                        detailState = BoardDetailState(state.record, transformOrigin)
+                                        detailVisible = true
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            Button(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(16.dp)
+                    .height(52.dp)
+                    .zIndex(40f),
+                onClick = { isAligned = !isAligned },
+                shape = G2RoundedCornerShape(999.dp),
+                elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp, pressedElevation = 0.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color.White.copy(alpha = 0.88f),
+                    contentColor = PrimaryBlue
+                )
+            ) {
+                Text(text = if (isAligned) "흩뿌리기" else "정렬", fontSize = 17.sp, fontWeight = FontWeight.Black)
+            }
+
+            }
+
+            GhostButton(text = "뒤로가기", modifier = Modifier.fillMaxWidth(), onClick = onGoBack)
+        }
+
+        AnimatedVisibility(
+            visible = detailVisible && detailState != null,
+            modifier = Modifier
+                .fillMaxSize()
+                .zIndex(80f),
+            enter = fadeIn(animationSpec = tween(180)) + scaleIn(
+                initialScale = 0.58f,
+                transformOrigin = detailState?.transformOrigin ?: TransformOrigin.Center,
+                animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow)
+            ),
+            exit = fadeOut(animationSpec = tween(180)) + scaleOut(
+                targetScale = 0.58f,
+                transformOrigin = detailState?.transformOrigin ?: TransformOrigin.Center,
+                animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow)
+            )
+        ) {
+            detailState?.record?.let { record ->
+                BoardReceiptDetailOverlay(
+                    record = record,
+                    selectedTheme = record.receiptThemeOr(selectedTheme),
+                    onDismiss = { detailVisible = false }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PassengerReceiptBoardHeader(
+    passengerName: String,
+    totalFare: Int
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = G2RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 18.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(text = "$passengerName 손님", color = DarkText, fontSize = 28.sp, fontWeight = FontWeight.Bold)
+                Text(text = "날짜별 영수증을 자유롭게 배치해보세요.", color = GrayText, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+            }
+            Column(
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(text = "총 이용 금액", color = GrayText, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text(text = "${totalFare.formatWon()}원", color = PrimaryBlue, fontSize = 25.sp, fontWeight = FontWeight.Black)
+            }
+        }
+    }
+}
+
+private class ReceiptBoardItemState(
+    val record: RideRecord,
+    val date: LocalDate?,
+    val lineRatio: Float,
+    val minYRatio: Float,
+    val maxYRatio: Float,
+    val indexInDate: Int,
+    val countInDate: Int,
+    initialXRatio: Float,
+    initialYRatio: Float,
+    val rotation: Float
+) {
+    var xRatio by mutableFloatStateOf(initialXRatio)
+    var yRatio by mutableFloatStateOf(initialYRatio)
+}
+
+private data class BoardDetailState(
+    val record: RideRecord,
+    val transformOrigin: TransformOrigin
+)
+
+private fun receiptBoardContentHeight(
+    records: List<RideRecord>,
+    columnCount: Int,
+    thumbnailHeight: Dp,
+    minHeight: Dp
+): Dp {
+    if (records.isEmpty()) return minHeight
+
+    val columns = columnCount.coerceAtLeast(1)
+    val dateGroups = records.groupBy { it.recordDateOrNull() }
+    val totalRows = dateGroups.values.sumOf { recordsInDate ->
+        ((recordsInDate.size + columns - 1) / columns).coerceAtLeast(1)
+    }
+    val dateCount = dateGroups.size.coerceAtLeast(1)
+    val rowStep = thumbnailHeight * 0.58f
+    val contentHeight = 44.dp +
+        (dateCount * 188).dp +
+        (thumbnailHeight * dateCount) +
+        (rowStep * (totalRows - dateCount).coerceAtLeast(0)) +
+        76.dp
+
+    return maxOf(minHeight, contentHeight)
+}
+
+private fun createReceiptBoardStates(
+    records: List<RideRecord>,
+    columnCount: Int,
+    contentHeight: Dp,
+    thumbnailHeight: Dp
+): List<ReceiptBoardItemState> {
+    val recordsByDate = records.groupBy { it.recordDateOrNull() }
+    val dateOrder = recordsByDate.keys.toList()
+    val groupedIndex = mutableMapOf<LocalDate?, Int>()
+    val columns = columnCount.coerceAtLeast(1)
+    val dateRows = dateOrder.associateWith { date ->
+        val count = recordsByDate[date]?.size ?: 0
+        ((count + columns - 1) / columns).coerceAtLeast(1)
+    }
+    val totalRows = dateRows.values.sum().coerceAtLeast(1)
+    val contentHeightValue = contentHeight.value.coerceAtLeast(1f)
+    val thumbnailHeightValue = thumbnailHeight.value
+    val rowStep = (thumbnailHeightValue * 0.58f).coerceAtLeast(130f)
+    val dateHeaderHeight = 58f
+    val sectionBottomPadding = 72f
+    val requiredHeight = dateOrder.sumOf { date ->
+        val rows = dateRows[date] ?: 1
+        (dateHeaderHeight + thumbnailHeightValue + rowStep * (rows - 1) + sectionBottomPadding).toDouble()
+    }.toFloat()
+    val scale = if (requiredHeight > contentHeightValue) {
+        contentHeightValue / requiredHeight
+    } else {
+        1f
+    }
+    val scaledRowStep = rowStep * scale
+    val scaledHeaderHeight = dateHeaderHeight * scale
+    val scaledBottomPadding = sectionBottomPadding * scale
+    var sectionTop = 0f
+    val sectionBounds = dateOrder.associateWith { date ->
+        val rows = dateRows[date] ?: 1
+        val lineY = sectionTop + 28f * scale
+        val minY = lineY + scaledHeaderHeight
+        val maxY = minY + scaledRowStep * (rows - 1)
+        val sectionHeight = scaledHeaderHeight + thumbnailHeightValue * scale + scaledRowStep * (rows - 1) + scaledBottomPadding
+        sectionTop += sectionHeight
+        Triple(
+            (lineY / contentHeightValue).coerceIn(0f, 1f),
+            (minY / contentHeightValue).coerceIn(0f, 1f),
+            (maxY / contentHeightValue).coerceIn(0f, 1f)
+        )
+    }
+
+    return records.mapIndexed { index, record ->
+        val date = record.recordDateOrNull()
+        val indexInDate = groupedIndex.getOrDefault(date, 0)
+        groupedIndex[date] = indexInDate + 1
+        val countInDate = recordsByDate[date]?.size ?: 1
+        val (lineRatio, minYRatio, maxYRatio) = sectionBounds[date] ?: Triple(0.04f, 0.12f, 0.9f)
+        val seed = record.id.hashCode() + index * 31
+        val verticalWindow = (maxYRatio - minYRatio).coerceAtLeast(0.01f)
+        val columnsInDate = minOf(columns, countInDate).coerceAtLeast(1)
+        val rowsInDate = ((countInDate + columnsInDate - 1) / columnsInDate).coerceAtLeast(1)
+        val row = indexInDate / columnsInDate
+        val col = indexInDate % columnsInDate
+        val xBase = if (columnsInDate == 1) {
+            0.5f
+        } else {
+            0.07f + (col.toFloat() / (columnsInDate - 1).toFloat()) * 0.86f
+        }
+        val xJitter = (seededRatio(seed, 19) - 0.5f) * 0.20f
+        val rowProgress = if (rowsInDate <= 1) {
+            0f
+        } else {
+            row.toFloat() / (rowsInDate - 1).toFloat()
+        }
+        val organicJitter = (seededRatio(seed, 41) - 0.5f) * if (rowsInDate <= 1) 0.08f else 0.14f
+        val yProgress = (rowProgress + organicJitter).coerceIn(0f, 1f)
+
+        ReceiptBoardItemState(
+            record = record,
+            date = date,
+            lineRatio = lineRatio,
+            minYRatio = minYRatio,
+            maxYRatio = maxYRatio,
+            indexInDate = indexInDate,
+            countInDate = countInDate,
+            initialXRatio = (xBase + xJitter).coerceIn(0.02f, 0.98f),
+            initialYRatio = (minYRatio + yProgress * verticalWindow).coerceIn(minYRatio, maxYRatio),
+            rotation = -15f + seededRatio(seed, 73) * 30f
+        )
+    }
+}
+
+private fun seededRatio(seed: Int, salt: Int): Float {
+    val value = abs(sin((seed + salt) * 12.9898) * 43758.5453)
+    return (value - floor(value)).toFloat()
+}
+
+private fun rubberBandOffset(overflow: Float): Float {
+    if (overflow == 0f) return 0f
+    val distance = abs(overflow)
+    val resistance = 1f - (1f / (distance / 180f + 1f))
+    return sign(overflow) * 112f * resistance
+}
+
+@Composable
+private fun TimelineBackground(
+    states: List<ReceiptBoardItemState>,
+    maxHeight: Dp,
+    receiptHeight: Dp
+) {
+    val anchors = states
+        .groupBy { it.date }
+        .map { (date, dateStates) -> date to dateStates.first().lineRatio }
+        .sortedBy { it.second }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        anchors.forEach { (date, ratio) ->
+            val y = (maxHeight - receiptHeight) * ratio.coerceIn(0f, 1f) + 18.dp
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .offset(y = y)
+                    .padding(horizontal = 18.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = date?.let { "${it.monthValue}월 ${it.dayOfMonth}일" } ?: "날짜 없음",
+                    color = DarkText.copy(alpha = 0.48f),
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Black
+                )
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(1.dp)
+                        .background(Color.White.copy(alpha = 0.62f))
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun BoardReceiptDetailOverlay(
+    record: RideRecord,
+    selectedTheme: MeshTheme,
+    onDismiss: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.18f))
+            .padding(18.dp)
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            ReceiptDetailPaper(
+                record = record,
+                selectedTheme = selectedTheme,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+            )
+            GhostButton(text = "뒤로가기", modifier = Modifier.fillMaxWidth(), onClick = onDismiss)
+        }
+    }
+}
+
+@Composable
+private fun ReceiptDetailPaper(
+    record: RideRecord,
+    selectedTheme: MeshTheme,
+    modifier: Modifier = Modifier
+) {
+    val isNightReceipt = selectedTheme == MeshTheme.Night
+    val textColor = if (isNightReceipt) Color.White else DarkText
+    val mutedColor = if (isNightReceipt) Color.White.copy(alpha = 0.82f) else GrayText
+    val strongLineColor = if (isNightReceipt) Color.White.copy(alpha = 0.72f) else Color(0xFF30343B)
+    val softLineColor = if (isNightReceipt) Color.White.copy(alpha = 0.42f) else Color(0xFFB8B8B8)
+    val amountColor = if (isNightReceipt) Color(0xFF55B8FF) else PrimaryBlue
+
+    Box(
+        modifier = modifier
+            .clip(ReceiptPaperShape())
+            .border(1.dp, Color.White.copy(alpha = 0.45f), ReceiptPaperShape())
+    ) {
+        Image(
+            painter = painterResource(id = selectedTheme.drawableRes),
+            contentDescription = null,
+            modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.Crop
+        )
+        if (isNightReceipt) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.28f))
+            )
+        }
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(start = 34.dp, end = 34.dp, top = 24.dp, bottom = 86.dp),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(
+                    modifier = Modifier
+                        .width(168.dp)
+                        .height(14.dp)
+                        .background(Color(0xFF5A5F6A), G2RoundedCornerShape(999.dp))
+                )
+                Text(text = "카풀 영수증", color = textColor, fontSize = 30.sp, fontWeight = FontWeight.Black)
+                DashedLine(color = strongLineColor, thickness = 2)
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(text = "${record.passengerName} 손님,", color = textColor, fontSize = 36.sp, fontWeight = FontWeight.Black)
+                Text(text = "카풀미터기를 이용해주셔서 감사합니다", color = mutedColor, fontSize = 18.sp, fontWeight = FontWeight.Medium)
+                ThickLine(color = strongLineColor)
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                ReceiptRow("탑승일자", record.date, textColor = textColor, valueColor = textColor, amountColor = amountColor)
+                ReceiptRow("하차시각", record.endTime, textColor = textColor, valueColor = textColor, amountColor = amountColor)
+                DashedLine(color = softLineColor)
+                ReceiptRow("총 주행 시간", record.durationSeconds.formatDuration(), textColor = textColor, valueColor = textColor, amountColor = amountColor)
+                ReceiptRow("총 주행 거리", "%.1fkm".format(record.distanceKm), textColor = textColor, valueColor = textColor, amountColor = amountColor)
+                ReceiptRow("운행요금", "${record.rideFare.formatWon()}원", textColor = textColor, valueColor = textColor, amountColor = amountColor)
+                DashedLine(color = softLineColor)
+                ReceiptRow("통행요금", "${record.tollFare.formatWon()}원", textColor = textColor, valueColor = textColor, amountColor = amountColor)
+                ReceiptRow("추가요금", "${record.extraFare.formatWon()}원", textColor = textColor, valueColor = textColor, amountColor = amountColor)
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                DashedLine(color = strongLineColor, thickness = 2)
+                Text(text = "총 운행요금", color = mutedColor, fontSize = 22.sp, fontWeight = FontWeight.Black)
+                Text(
+                    text = "${record.totalFare.formatWon()}원",
+                    modifier = Modifier.fillMaxWidth(),
+                    color = amountColor,
+                    fontSize = 72.sp,
+                    fontWeight = FontWeight.Black,
+                    textAlign = TextAlign.End
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DraggableReceiptThumbnail(
+    state: ReceiptBoardItemState,
+    selectedTheme: MeshTheme,
+    index: Int,
+    thumbnailWidth: Dp,
+    thumbnailHeight: Dp,
+    maxTravelX: Float,
+    maxTravelY: Float,
+    visibleBoardHeight: Float,
+    scrollOffsetPx: Float,
+    isAligned: Boolean,
+    columnCount: Int,
+    onOpenDetail: (TransformOrigin) -> Unit
+) {
+    val receiptTheme = state.record.receiptThemeOr(selectedTheme)
+    val density = LocalDensity.current
+    val thumbnailWidthPx = with(density) { thumbnailWidth.toPx() }
+    val thumbnailHeightPx = with(density) { thumbnailHeight.toPx() }
+    var appeared by remember(state.record.id) { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay((index * 55L).coerceAtMost(360L))
+        appeared = true
+    }
+    val columnsInDate = minOf(columnCount, state.countInDate).coerceAtLeast(1)
+    val rowsInDate = ((state.countInDate + columnsInDate - 1) / columnsInDate).coerceAtLeast(1)
+    val row = state.indexInDate / columnsInDate
+    val rowStartIndex = row * columnsInDate
+    val itemsInRow = (state.countInDate - rowStartIndex).coerceIn(1, columnsInDate)
+    val colInRow = state.indexInDate - rowStartIndex
+    val alignedXRatio = if (itemsInRow == 1) {
+        0.5f
+    } else {
+        val gridStep = if (columnsInDate == 1) 0f else 0.88f / (columnsInDate - 1).toFloat()
+        val occupiedWidth = gridStep * (itemsInRow - 1).toFloat()
+        0.5f - occupiedWidth / 2f + colInRow * gridStep
+    }
+    val alignedYRatio = if (rowsInDate == 1) {
+        state.minYRatio
+    } else {
+        state.minYRatio + (row.toFloat() / (rowsInDate - 1).toFloat()) * (state.maxYRatio - state.minYRatio)
+    }
+    val alignedX = maxTravelX * alignedXRatio.coerceIn(0f, 1f)
+    val alignedY = maxTravelY * alignedYRatio.coerceIn(state.minYRatio, state.maxYRatio)
+    val freeOffset = Offset(maxTravelX * state.xRatio, maxTravelY * state.yRatio)
+    val targetOffset = if (isAligned) Offset(alignedX, alignedY) else freeOffset
+    val animatedOffset by animateOffsetAsState(
+        targetValue = targetOffset,
+        animationSpec = spring(dampingRatio = 0.82f, stiffness = Spring.StiffnessLow),
+        label = "receiptBoardOffset"
+    )
+    val animatedRotation by animateFloatAsState(
+        targetValue = if (isAligned) 0f else state.rotation,
+        animationSpec = spring(dampingRatio = 0.82f, stiffness = Spring.StiffnessLow),
+        label = "receiptBoardRotation"
+    )
+    val appearScale by animateFloatAsState(
+        targetValue = if (appeared) 1f else 0.84f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow),
+        label = "receiptBoardAppearScale"
+    )
+    val appearAlpha by animateFloatAsState(
+        targetValue = if (appeared) 1f else 0f,
+        animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
+        label = "receiptBoardAppearAlpha"
+    )
+    var rubberX by remember(state.record.id) { mutableFloatStateOf(0f) }
+    var rubberY by remember(state.record.id) { mutableFloatStateOf(0f) }
+    val animatedRubberX by animateFloatAsState(
+        targetValue = rubberX,
+        animationSpec = spring(dampingRatio = 0.68f, stiffness = Spring.StiffnessLow),
+        label = "receiptDragRubberX"
+    )
+    val animatedRubberY by animateFloatAsState(
+        targetValue = rubberY,
+        animationSpec = spring(dampingRatio = 0.68f, stiffness = Spring.StiffnessLow),
+        label = "receiptDragRubberY"
+    )
+    val thumbnailInteractionSource = remember { MutableInteractionSource() }
+
+    Box(
+        modifier = Modifier
+            .offset {
+                IntOffset(
+                    (animatedOffset.x + animatedRubberX).roundToInt(),
+                    (animatedOffset.y + animatedRubberY).roundToInt()
+                )
+            }
+            .size(width = thumbnailWidth, height = thumbnailHeight)
+            .clickable(
+                interactionSource = thumbnailInteractionSource,
+                indication = null
+            ) {
+                    val boardWidth = maxTravelX + thumbnailWidthPx
+                    onOpenDetail(
+                        TransformOrigin(
+                            pivotFractionX = ((animatedOffset.x + thumbnailWidthPx / 2f) / boardWidth).coerceIn(0f, 1f),
+                            pivotFractionY = ((animatedOffset.y - scrollOffsetPx + thumbnailHeightPx / 2f) / visibleBoardHeight).coerceIn(0f, 1f)
+                        )
+                    )
+            }
+            .graphicsLayer {
+                rotationZ = animatedRotation
+                scaleX = appearScale
+                scaleY = appearScale
+                alpha = appearAlpha
+                shadowElevation = 18f
+                shape = ReceiptPaperShape()
+                clip = false
+            }
+            .pointerInput(state.record.id, isAligned, maxTravelX, maxTravelY) {
+                detectDragGestures(
+                    onDragStart = {
+                        rubberX = 0f
+                        rubberY = 0f
+                    },
+                    onDragEnd = {
+                        rubberX = 0f
+                        rubberY = 0f
+                    },
+                    onDragCancel = {
+                        rubberX = 0f
+                        rubberY = 0f
+                    }
+                ) { change, dragAmount ->
+                    change.consume()
+                    if (!isAligned) {
+                        val currentX = state.xRatio * maxTravelX
+                        val currentY = state.yRatio * maxTravelY
+                        val proposedX = currentX + dragAmount.x + rubberX
+                        val proposedY = currentY + dragAmount.y + rubberY
+                        val clampedX = proposedX.coerceIn(0f, maxTravelX)
+                        val clampedY = proposedY.coerceIn(0f, maxTravelY)
+
+                        state.xRatio = (clampedX / maxTravelX).coerceIn(0f, 1f)
+                        state.yRatio = (clampedY / maxTravelY).coerceIn(0f, 1f)
+                        rubberX = rubberBandOffset(proposedX - clampedX)
+                        rubberY = rubberBandOffset(proposedY - clampedY)
+                    }
+                }
+            }
+    ) {
+        ReceiptThumbnailPaper(record = state.record, selectedTheme = receiptTheme)
+    }
+}
+
+@Composable
+private fun ReceiptThumbnailPaper(record: RideRecord, selectedTheme: MeshTheme) {
+    val isNightReceipt = selectedTheme == MeshTheme.Night
+    val textColor = if (isNightReceipt) Color.White else DarkText
+    val mutedColor = if (isNightReceipt) Color.White.copy(alpha = 0.82f) else GrayText
+    val lineColor = if (isNightReceipt) Color.White.copy(alpha = 0.54f) else Color(0xFF30343B)
+    val amountColor = if (isNightReceipt) Color(0xFF55B8FF) else PrimaryBlue
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .clip(ReceiptPaperShape())
+            .border(1.dp, Color.White.copy(alpha = 0.45f), ReceiptPaperShape())
+    ) {
+        Image(
+            painter = painterResource(id = selectedTheme.drawableRes),
+            contentDescription = null,
+            modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.Crop
+        )
+        if (isNightReceipt) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.28f))
+            )
+        }
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 44.dp),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(
+                    modifier = Modifier
+                        .width(82.dp)
+                        .height(8.dp)
+                        .background(Color(0xFF5A5F6A), G2RoundedCornerShape(999.dp))
+                )
+                Text(text = "카풀 영수증", color = textColor, fontSize = 17.sp, fontWeight = FontWeight.Black)
+                DashedLine(color = lineColor, thickness = 1)
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text(text = "${record.passengerName} 손님,", color = textColor, fontSize = 20.sp, fontWeight = FontWeight.Black)
+                Text(text = "${record.date}  ${record.endTime}", color = mutedColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                MiniReceiptRow("주행", "%.1fkm".format(record.distanceKm), textColor)
+                MiniReceiptRow("시간", record.durationSeconds.formatDuration(), textColor)
+                MiniReceiptRow("운행", "${record.rideFare.formatWon()}원", amountColor)
+            }
+
+            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(text = "총 운행요금", color = mutedColor, fontSize = 12.sp, fontWeight = FontWeight.Black)
+                Text(
+                    text = "${record.totalFare.formatWon()}원",
+                    modifier = Modifier.fillMaxWidth(),
+                    color = amountColor,
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.Black,
+                    textAlign = TextAlign.End
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun MiniReceiptRow(label: String, value: String, color: Color) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(text = label, color = color, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        Text(text = value, color = color, fontSize = 13.sp, fontWeight = FontWeight.Black)
+    }
+}
+
+@Composable
 private fun ReceiptScreen(
     record: RideRecord?,
     selectedTheme: MeshTheme,
     onGoHistory: () -> Unit,
-    onGoHome: () -> Unit
+    onGoHome: () -> Unit,
+    onShredRecord: (RideRecord) -> Unit
 ) {
     val item = record
     if (item == null) {
@@ -2794,86 +4823,558 @@ private fun ReceiptScreen(
         OrangeButton(text = "홈으로", modifier = Modifier.fillMaxWidth(), onClick = onGoHome)
         return
     }
-
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(1090.dp)
-            .padding(horizontal = 8.dp)
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .clip(ReceiptPaperShape())
-        ) {
-            Image(
-                painter = painterResource(id = selectedTheme.drawableRes),
-                contentDescription = null,
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop
+    val receiptTheme = item.receiptThemeOr(selectedTheme)
+    val isNightReceipt = receiptTheme == MeshTheme.Night
+    val receiptTextColor = if (isNightReceipt) Color.White else DarkText
+    val receiptMutedColor = if (isNightReceipt) Color.White.copy(alpha = 0.82f) else GrayText
+    val receiptStrongLineColor = if (isNightReceipt) Color.White.copy(alpha = 0.72f) else Color(0xFF30343B)
+    val receiptSoftLineColor = if (isNightReceipt) Color.White.copy(alpha = 0.42f) else Color(0xFFB8B8B8)
+    val receiptAmountColor = if (isNightReceipt) Color(0xFF55B8FF) else PrimaryBlue
+    val context = LocalContext.current
+    val soundScope = rememberCoroutineScope()
+    var receiptVisible by remember(item.id) { mutableStateOf(false) }
+    var printSoundId by remember(item.id) { mutableIntStateOf(0) }
+    var tearSoundId by remember(item.id) { mutableIntStateOf(0) }
+    var papercutSoundId by remember(item.id) { mutableIntStateOf(0) }
+    var loadedSoundCount by remember(item.id) { mutableIntStateOf(0) }
+    var papercutSoundReady by remember(item.id) { mutableStateOf(false) }
+    var papercutPlayRequest by remember(item.id) { mutableIntStateOf(0) }
+    var playedReceiptSounds by remember(item.id) { mutableStateOf(false) }
+    val shredScope = rememberCoroutineScope()
+    val shredProgress = remember(item.id) { Animatable(0f) }
+    var shredderVisible by remember(item.id) { mutableStateOf(false) }
+    var shredding by remember(item.id) { mutableStateOf(false) }
+    var shredSuccessVisible by remember(item.id) { mutableStateOf(false) }
+    val receiptSoundPool = remember(item.id) {
+        SoundPool.Builder()
+            .setMaxStreams(3)
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build()
             )
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(start = 38.dp, end = 38.dp, top = 26.dp, bottom = 110.dp),
-                verticalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Box(
-                        modifier = Modifier
-                            .width(230.dp)
-                            .height(18.dp)
-                            .background(Color(0xFF5A5F6A), G2RoundedCornerShape(7.dp))
-                    )
-                    GlassIconContainer(symbol = "♞", size = 52.dp, fontSize = 28.sp)
-                    Text(text = "카풀 영수증", color = DarkText, fontSize = 34.sp, fontWeight = FontWeight.Black)
-                    DashedLine(color = Color(0xFF30343B), thickness = 2)
-                }
+            .build()
+    }
 
-                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    Text(text = "${item.passengerName} 손님,", color = DarkText, fontSize = 40.sp, fontWeight = FontWeight.Black)
-                    Text(text = "카풀미터기를 이용해주셔서 감사합니다", color = GrayText, fontSize = 20.sp, fontWeight = FontWeight.Medium)
-                    ThickLine()
-                }
-
-                Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
-                    ReceiptRow("탑승일자", item.date)
-                    ReceiptRow("하차시각", item.endTime)
-                    DashedLine()
-                    ReceiptRow("총 주행 시간", item.durationSeconds.formatDuration())
-                    ReceiptRow("총 주행 거리", "%.1fkm".format(item.distanceKm))
-                    ReceiptRow("운행요금", "${item.rideFare.formatWon()}원")
-                    DashedLine()
-                    ReceiptRow("통행요금", "${item.tollFare.formatWon()}원")
-                    ReceiptRow("추가요금", "${item.extraFare.formatWon()}원")
-                }
-
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    DashedLine(color = Color(0xFF30343B), thickness = 2)
-                    Text(text = "총 운행요금", color = GrayText, fontSize = 24.sp, fontWeight = FontWeight.Black)
-                    Text(text = "${item.totalFare.formatWon()}원", modifier = Modifier.fillMaxWidth(), color = PrimaryBlue, fontSize = 82.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.End)
+    DisposableEffect(receiptSoundPool, context) {
+        receiptSoundPool.setOnLoadCompleteListener { _, sampleId, status ->
+            if (status == 0) {
+                soundScope.launch {
+                    loadedSoundCount += 1
+                    if (sampleId == papercutSoundId) {
+                        papercutSoundReady = true
+                    }
                 }
             }
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                val toothWidth = 26f
-                val cutDepth = 17f
-                val paperBottom = size.height - cutDepth - 9f
-                drawPath(
-                    path = pinkingEdgePath(size, toothWidth, cutDepth, paperBottom),
-                    color = Color(0x664A5364),
-                    style = Stroke(width = 2f, cap = StrokeCap.Round)
-                )
+        }
+        printSoundId = receiptSoundPool.load(context, R.raw.print_sound, 1)
+        tearSoundId = receiptSoundPool.load(context, R.raw.tear_sound, 1)
+        papercutSoundId = receiptSoundPool.load(context, R.raw.papercut, 1)
+
+        onDispose {
+            receiptSoundPool.release()
+        }
+    }
+
+    LaunchedEffect(item.id, loadedSoundCount, printSoundId, tearSoundId) {
+        if (!playedReceiptSounds && loadedSoundCount >= 2 && printSoundId != 0 && tearSoundId != 0) {
+            playedReceiptSounds = true
+            receiptVisible = true
+            receiptSoundPool.play(printSoundId, 1f, 1f, 1, 0, 1f)
+            kotlinx.coroutines.delay(1500L)
+            receiptSoundPool.play(tearSoundId, 1f, 1f, 1, 0, 1f)
+        }
+    }
+
+    LaunchedEffect(papercutPlayRequest, papercutSoundReady, papercutSoundId) {
+        if (papercutPlayRequest > 0 && papercutSoundReady && papercutSoundId != 0) {
+            receiptSoundPool.play(papercutSoundId, 1f, 1f, 1, 0, 0.8f)
+        }
+    }
+
+    LaunchedEffect(item.id) {
+        kotlinx.coroutines.delay(900L)
+        if (!receiptVisible) {
+            receiptVisible = true
+        }
+    }
+
+    val isWideLayout = LocalConfiguration.current.screenWidthDp >= 600
+
+    @Composable
+    fun ReceiptPane() {
+        AnimatedVisibility(
+            visible = receiptVisible,
+            enter = slideInVertically(
+                animationSpec = tween(durationMillis = 1500, easing = FastOutSlowInEasing),
+                initialOffsetY = { -it - 260 }
+            ) + fadeIn(animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing)),
+            exit = slideOutVertically(
+                animationSpec = tween(durationMillis = 360, easing = FastOutSlowInEasing),
+                targetOffsetY = { -it / 3 }
+            ) + fadeOut(animationSpec = tween(durationMillis = 240, easing = FastOutSlowInEasing))
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(1090.dp)
+                    .padding(horizontal = 8.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clip(ReceiptPaperShape())
+                ) {
+                    Image(
+                        painter = painterResource(id = receiptTheme.drawableRes),
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.White.copy(alpha = receiptTheme.receiptPaperOverlayAlpha()))
+                    )
+                    if (isNightReceipt) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Color.Black.copy(alpha = 0.28f))
+                        )
+                    }
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(start = 38.dp, end = 38.dp, top = 26.dp, bottom = 110.dp),
+                        verticalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Box(
+                                modifier = Modifier
+                                    .width(230.dp)
+                                    .height(18.dp)
+                                    .background(Color(0xFF5A5F6A), G2RoundedCornerShape(7.dp))
+                            )
+                            GlassIconContainer(symbol = "♞", size = 52.dp, fontSize = 28.sp)
+                            Text(text = "카풀 영수증", color = receiptTextColor, fontSize = 34.sp, fontWeight = FontWeight.Black)
+                            DashedLine(color = receiptStrongLineColor, thickness = 2)
+                        }
+
+                        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                            Text(text = "${item.passengerName} 손님,", color = receiptTextColor, fontSize = 40.sp, fontWeight = FontWeight.Black)
+                            Text(text = "카풀미터기를 이용해주셔서 감사합니다", color = receiptMutedColor, fontSize = 20.sp, fontWeight = FontWeight.Medium)
+                            ThickLine(color = receiptStrongLineColor)
+                        }
+
+                        Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
+                            ReceiptRow("탑승일자", item.date, textColor = receiptTextColor, valueColor = receiptTextColor, amountColor = receiptAmountColor)
+                            ReceiptRow("하차시각", item.endTime, textColor = receiptTextColor, valueColor = receiptTextColor, amountColor = receiptAmountColor)
+                            DashedLine(color = receiptSoftLineColor)
+                            ReceiptRow("총 주행 시간", item.durationSeconds.formatDuration(), textColor = receiptTextColor, valueColor = receiptTextColor, amountColor = receiptAmountColor)
+                            ReceiptRow("총 주행 거리", "%.1fkm".format(item.distanceKm), textColor = receiptTextColor, valueColor = receiptTextColor, amountColor = receiptAmountColor)
+                            ReceiptRow("운행요금", "${item.rideFare.formatWon()}원", textColor = receiptTextColor, valueColor = receiptTextColor, amountColor = receiptAmountColor)
+                            DashedLine(color = receiptSoftLineColor)
+                            ReceiptRow("통행요금", "${item.tollFare.formatWon()}원", textColor = receiptTextColor, valueColor = receiptTextColor, amountColor = receiptAmountColor)
+                            ReceiptRow("추가요금", "${item.extraFare.formatWon()}원", textColor = receiptTextColor, valueColor = receiptTextColor, amountColor = receiptAmountColor)
+                        }
+
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(14.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            DashedLine(color = receiptStrongLineColor, thickness = 2)
+                            Text(text = "총 운행요금", color = receiptMutedColor, fontSize = 24.sp, fontWeight = FontWeight.Black)
+                            Text(text = "${item.totalFare.formatWon()}원", modifier = Modifier.fillMaxWidth(), color = receiptAmountColor, fontSize = 82.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.End)
+                        }
+                    }
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        val toothWidth = 26f
+                        val cutDepth = 17f
+                        val paperBottom = size.height - cutDepth - 9f
+                        drawPath(
+                            path = pinkingEdgePath(size, toothWidth, cutDepth, paperBottom),
+                            color = Color(0x664A5364),
+                            style = Stroke(width = 2f, cap = StrokeCap.Round)
+                        )
+                    }
+                    ShreddedReceiptOverlay(progress = shredProgress.value)
+                }
             }
         }
     }
 
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        ReceiptGhostButton(text = "내역 보기", modifier = Modifier.weight(1f), onClick = onGoHistory)
-        ReceiptPrimaryButton(text = "홈으로", modifier = Modifier.weight(1f), onClick = onGoHome)
+    @Composable
+    fun ReceiptActions(modifier: Modifier = Modifier) {
+        if (!shredding && !shredSuccessVisible) {
+            if (receiptVisible) {
+                Row(
+                    modifier = modifier,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    ReceiptPrimaryButton(text = "홈으로", modifier = Modifier.weight(1f), onClick = onGoHome)
+                    ReceiptShredIconButton(
+                        modifier = Modifier.width(132.dp),
+                        onClick = {
+                            if (!shredSuccessVisible) {
+                                shredderVisible = true
+                            }
+                        }
+                    )
+                }
+            } else {
+                ReceiptPrimaryButton(text = "홈으로", modifier = modifier, onClick = onGoHome)
+            }
+        }
+    }
+
+    @Composable
+    fun ShredderLayer(
+        shredderModifier: Modifier,
+        toastModifier: Modifier
+    ) {
+        ShredderSheet(
+            visible = shredderVisible || shredding,
+            progress = shredProgress.value,
+            shredding = shredding,
+            onShred = {
+                if (!shredding) {
+                    shredderVisible = true
+                    shredding = true
+                    papercutPlayRequest += 1
+                    shredScope.launch {
+                        shredProgress.snapTo(0f)
+                        var progress = 0f
+                        while (progress < 1f) {
+                            kotlinx.coroutines.delay(Random.nextLong(50L, 151L))
+                            progress = (progress + Random.nextFloat() * 0.075f + 0.035f).coerceAtMost(1f)
+                            shredProgress.animateTo(
+                                targetValue = progress,
+                                animationSpec = tween(
+                                    durationMillis = Random.nextInt(45, 105),
+                                    easing = FastOutSlowInEasing
+                                )
+                            )
+                        }
+                        kotlinx.coroutines.delay(120L)
+                        receiptVisible = false
+                        kotlinx.coroutines.delay(360L)
+                        shredderVisible = false
+                        shredding = false
+                        onShredRecord(item)
+                        shredSuccessVisible = true
+                        kotlinx.coroutines.delay(900L)
+                        onGoHome()
+                        kotlinx.coroutines.delay(300L)
+                        shredSuccessVisible = false
+                    }
+                }
+            },
+            onCancel = {
+                if (!shredding) {
+                    shredderVisible = false
+                }
+            },
+            modifier = shredderModifier
+        )
+
+        ShredSuccessToast(
+            visible = shredSuccessVisible,
+            modifier = toastModifier
+        )
+    }
+
+    Box(modifier = Modifier.fillMaxWidth()) {
+        if (isWideLayout) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    ReceiptPane()
+                }
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(1090.dp)
+                ) {
+                    ReceiptActions(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .widthIn(max = 400.dp)
+                    )
+                    ShredderLayer(
+                        shredderModifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .zIndex(8f),
+                        toastModifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = 96.dp)
+                            .zIndex(9f)
+                    )
+                }
+            }
+        } else {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                ReceiptPane()
+                ReceiptActions(modifier = Modifier.fillMaxWidth())
+            }
+
+            ShredderLayer(
+                shredderModifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .zIndex(8f),
+                toastModifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 96.dp)
+                    .zIndex(9f)
+            )
+        }
+    }
+}
+
+@Composable
+private fun ShreddedReceiptOverlay(progress: Float) {
+    if (progress <= 0.01f) return
+
+    Canvas(modifier = Modifier.fillMaxSize()) {
+        val clippedProgress = progress.coerceIn(0f, 1f)
+        val mouthY = size.height * (1f - clippedProgress)
+        val stripCount = 14
+        val stripWidth = size.width / stripCount
+
+        drawRect(
+            color = Color.Black.copy(alpha = 0.10f * clippedProgress),
+            topLeft = Offset(0f, (mouthY - 7f).coerceAtLeast(0f)),
+            size = Size(size.width, 14f)
+        )
+
+        repeat(stripCount) { index ->
+            val x = index * stripWidth
+            val sway = sin(index * 1.73f + clippedProgress * 14f) * 9f
+            val lengthNoise = abs(sin(index * 2.11f)) * 30f
+            val startY = (mouthY + 10f + lengthNoise).coerceAtMost(size.height)
+
+            drawRect(
+                color = Color.White.copy(alpha = 0.09f + clippedProgress * 0.10f),
+                topLeft = Offset(x + 2f, startY),
+                size = Size((stripWidth - 4f).coerceAtLeast(1f), (size.height - startY).coerceAtLeast(0f))
+            )
+
+            if (index > 0) {
+                drawLine(
+                    color = Color.White.copy(alpha = 0.74f),
+                    start = Offset(x + sway * 0.15f, startY),
+                    end = Offset(x + sway, size.height),
+                    strokeWidth = 4.5f,
+                    cap = StrokeCap.Round
+                )
+                drawLine(
+                    color = Color(0x554A5364),
+                    start = Offset(x + 3f + sway * 0.15f, startY + 10f),
+                    end = Offset(x + 3f + sway, size.height),
+                    strokeWidth = 1.4f,
+                    cap = StrokeCap.Round
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReceiptShredIconButton(modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val shape = G2RoundedCornerShape(999.dp)
+    Button(
+        modifier = modifier.height(74.dp),
+        onClick = onClick,
+        shape = shape,
+        elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp, pressedElevation = 0.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = Color(0xFF1D1D1F),
+            contentColor = Color.White
+        )
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(1.dp)) {
+            Text(text = "▥", fontSize = 25.sp, fontWeight = FontWeight.Black, lineHeight = 25.sp)
+            Text(text = "파쇄", fontSize = 14.sp, fontWeight = FontWeight.Black, lineHeight = 14.sp)
+        }
+    }
+}
+
+@Composable
+private fun ShredderSheet(
+    visible: Boolean,
+    progress: Float,
+    shredding: Boolean,
+    onShred: () -> Unit,
+    onCancel: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val riseOffset = (-920f * progress.coerceIn(0f, 1f)).dp
+
+    AnimatedVisibility(
+        visible = visible,
+        modifier = modifier,
+        enter = slideInVertically(
+            animationSpec = tween(durationMillis = 430, easing = FastOutSlowInEasing),
+            initialOffsetY = { it + 120 }
+        ) + fadeIn(animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing)),
+        exit = slideOutVertically(
+            animationSpec = tween(durationMillis = 300, easing = FastOutSlowInEasing),
+            targetOffsetY = { it + 80 }
+        ) + fadeOut(animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing))
+    ) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .widthIn(max = 400.dp)
+                .offset(y = if (shredding) riseOffset else 0.dp)
+                .padding(horizontal = 8.dp, vertical = 8.dp),
+            shape = G2RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(562f / 444f)
+            ) {
+                Image(
+                    painter = painterResource(id = if (shredding) R.drawable.pas2 else R.drawable.pas1),
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.FillBounds
+                )
+
+                if (!shredding) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(start = 54.dp, end = 54.dp, top = 64.dp, bottom = 42.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = "영수증을 파쇄하시겠습니까?",
+                            color = Color(0xFF4F565C),
+                            fontSize = 23.sp,
+                            fontWeight = FontWeight.Black,
+                            textAlign = TextAlign.Center,
+                            lineHeight = 29.sp
+                        )
+                        Spacer(modifier = Modifier.weight(1f))
+                        Button(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(66.dp),
+                            onClick = onShred,
+                            enabled = !shredding,
+                            shape = G2RoundedCornerShape(17.dp),
+                            elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp, pressedElevation = 0.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFFE8473F),
+                                contentColor = Color.White,
+                                disabledContainerColor = Color(0xFFE8473F).copy(alpha = 0.55f),
+                                disabledContentColor = Color.White
+                            )
+                        ) {
+                            Text(text = "파쇄하기", fontSize = 25.sp, fontWeight = FontWeight.Black)
+                        }
+                        Spacer(modifier = Modifier.height(22.dp))
+                        Button(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(66.dp),
+                            onClick = onCancel,
+                            enabled = !shredding,
+                            shape = G2RoundedCornerShape(17.dp),
+                            border = androidx.compose.foundation.BorderStroke(2.dp, Color(0x994C555D)),
+                            elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp, pressedElevation = 0.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color.White.copy(alpha = 0.20f),
+                                contentColor = Color(0xFF4C555D),
+                                disabledContainerColor = Color.White.copy(alpha = 0.12f),
+                                disabledContentColor = Color(0x884C555D)
+                            )
+                        ) {
+                            Text(text = "취소", fontSize = 23.sp, fontWeight = FontWeight.Black)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ShredderBladeRow(modifier: Modifier = Modifier) {
+    Canvas(
+        modifier = modifier
+            .height(38.dp)
+            .background(Color(0xFF171A20).copy(alpha = 0.82f))
+    ) {
+        val bladeCount = 18
+        val gap = size.width / bladeCount
+        repeat(bladeCount) { index ->
+            val x = index * gap + gap * 0.5f
+            drawLine(
+                color = Color.White.copy(alpha = 0.65f),
+                start = Offset(x, 2f),
+                end = Offset(x - gap * 0.10f, size.height - 2f),
+                strokeWidth = gap * 0.16f,
+                cap = StrokeCap.Round
+            )
+            drawLine(
+                color = Color.Black.copy(alpha = 0.42f),
+                start = Offset(x + gap * 0.18f, 0f),
+                end = Offset(x + gap * 0.04f, size.height),
+                strokeWidth = gap * 0.12f,
+                cap = StrokeCap.Round
+            )
+        }
+    }
+}
+
+@Composable
+private fun ShredSuccessToast(visible: Boolean, modifier: Modifier = Modifier) {
+    AnimatedVisibility(
+        visible = visible,
+        modifier = modifier,
+        enter = slideInVertically(
+            animationSpec = tween(durationMillis = 360, easing = FastOutSlowInEasing),
+            initialOffsetY = { it / 2 }
+        ) + fadeIn(animationSpec = tween(durationMillis = 240, easing = FastOutSlowInEasing)),
+        exit = slideOutVertically(
+            animationSpec = tween(durationMillis = 300, easing = FastOutSlowInEasing),
+            targetOffsetY = { it / 2 }
+        ) + fadeOut(animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing))
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .background(Color(0xEE1D1D1F), G2RoundedCornerShape(999.dp))
+                .border(1.dp, Color.White.copy(alpha = 0.18f), G2RoundedCornerShape(999.dp))
+                .padding(horizontal = 22.dp, vertical = 18.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = "성공적으로 영수증을 파쇄했습니다",
+                color = Color.White,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Black,
+                textAlign = TextAlign.Center
+            )
+        }
     }
 }
 
@@ -3253,7 +5754,15 @@ private fun PageHeader(title: String, subtitle: String) {
 }
 
 @Composable
-private fun ReceiptRow(label: String, value: String, bold: Boolean = false) {
+private fun ReceiptRow(
+    label: String,
+    value: String,
+    bold: Boolean = false,
+    textColor: Color = DarkText,
+    valueColor: Color = DarkText,
+    amountColor: Color = valueColor
+) {
+    val resolvedValueColor = if (value.trim().endsWith("원")) amountColor else valueColor
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -3261,8 +5770,8 @@ private fun ReceiptRow(label: String, value: String, bold: Boolean = false) {
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(text = label, color = DarkText, fontSize = 23.sp, fontWeight = if (bold) FontWeight.Bold else FontWeight.SemiBold)
-        Text(text = value, color = DarkText, fontSize = 24.sp, fontWeight = if (bold) FontWeight.Bold else FontWeight.SemiBold)
+        Text(text = label, color = textColor, fontSize = 23.sp, fontWeight = if (bold) FontWeight.Bold else FontWeight.SemiBold)
+        Text(text = value, color = resolvedValueColor, fontSize = 24.sp, fontWeight = if (bold) FontWeight.Bold else FontWeight.SemiBold)
     }
 }
 
@@ -3383,8 +5892,13 @@ private fun Path.addPinkingEdge(width: Float, toothWidth: Float, cutDepth: Float
 
 private enum class AppScreen {
     Home,
+    AppInfo,
+    Donation,
+    Challenges,
+    ChallengeBadgeBoard,
     EndRide,
     History,
+    PassengerReceiptBoard,
     PassengerHistory,
     PassengerFullHistory,
     Receipt,
@@ -3410,8 +5924,162 @@ private data class RideRecord(
     val rideFare: Int,
     val tollFare: Int,
     val extraFare: Int,
-    val totalFare: Int
+    val totalFare: Int,
+    val themeCode: String
 )
+
+private data class ChallengeItem(
+    val title: String,
+    val description: String,
+    val progress: Float,
+    val progressLabel: String
+)
+
+private fun buildChallengeItems(records: List<RideRecord>): List<ChallengeItem> {
+    val recentCutoffDate = LocalDate.now().minusDays(30)
+    val completedRides = records.size
+    val uniquePassengerCount = records
+        .map { it.passengerName.trim().ifBlank { "이름 없는" } }
+        .distinct()
+        .size
+    val recentRideCount = records.count { record ->
+        record.recordDateOrNull()?.let { !it.isBefore(recentCutoffDate) } == true
+    }
+    val totalDistanceKm = records.sumOf { it.distanceKm.toDouble() }.toFloat()
+    val totalFare = records.sumOf { it.totalFare }
+    val totalDurationSeconds = records.sumOf { it.durationSeconds }
+    val nightReceiptCount = records.count { it.themeCode == MeshTheme.Night.code }
+    val longRideCount = records.count { it.distanceKm >= 5f }
+    val shortRideCount = records.count { it.distanceKm in 0f..1f }
+    val tollRideCount = records.count { it.tollFare > 0 }
+    val extraFareRideCount = records.count { it.extraFare > 0 }
+    val premiumFareCount = records.count { it.totalFare >= 10000 }
+    val themeCount = records.map { it.themeCode }.distinct().size
+    val busiestPassengerRideCount = records
+        .groupBy { it.passengerName.trim().ifBlank { "이름 없는" } }
+        .values
+        .maxOfOrNull { it.size } ?: 0
+    val sameDayMaxRideCount = records
+        .groupBy { it.date }
+        .values
+        .maxOfOrNull { it.size } ?: 0
+
+    fun item(title: String, description: String, current: Float, target: Float, label: String): ChallengeItem =
+        ChallengeItem(
+            title = title,
+            description = description,
+            progress = if (target <= 0f) 0f else current / target,
+            progressLabel = label
+        )
+
+    return listOf(
+        item(
+            title = "첫 영수증 발급",
+            description = "첫 번째 카풀 운행을 완료하면 열리는 시작 배지",
+            current = completedRides.toFloat(),
+            target = 1f,
+            label = "$completedRides / 1회"
+        ),
+        item(
+            title = "단골 손님 메모리",
+            description = "서로 다른 손님 3명의 카풀 영수증을 모으기",
+            current = uniquePassengerCount.toFloat(),
+            target = 3f,
+            label = "$uniquePassengerCount / 3명"
+        ),
+        item(
+            title = "최근 30일 카풀러",
+            description = "최근 30일 안에 10번의 카풀 기록 남기기",
+            current = recentRideCount.toFloat(),
+            target = 10f,
+            label = "$recentRideCount / 10회"
+        ),
+        item(
+            title = "100km 동행",
+            description = "친구들과 함께 누적 100km 이동하기",
+            current = totalDistanceKm,
+            target = 100f,
+            label = "%.1fkm / 100km".format(totalDistanceKm)
+        ),
+        item(
+            title = "10만원 정산왕",
+            description = "누적 결제 금액 100,000원 달성하기",
+            current = totalFare.toFloat(),
+            target = 100000f,
+            label = "${totalFare.formatWon()}원 / 100,000원"
+        ),
+        item(
+            title = "1시간 안전 운행",
+            description = "누적 주행 시간 1시간 채우기",
+            current = totalDurationSeconds.toFloat(),
+            target = 3600f,
+            label = "${totalDurationSeconds.formatDuration()} / 01:00:00"
+        ),
+        item(
+            title = "나이트 영수증 컬렉터",
+            description = "나이트 테마로 저장된 영수증 3장 모으기",
+            current = nightReceiptCount.toFloat(),
+            target = 3f,
+            label = "$nightReceiptCount / 3장"
+        ),
+        item(
+            title = "장거리 동행",
+            description = "5km 이상 이동한 카풀 기록 5장 모으기",
+            current = longRideCount.toFloat(),
+            target = 5f,
+            label = "$longRideCount / 5회"
+        ),
+        item(
+            title = "동네 한 바퀴",
+            description = "1km 이하 짧은 카풀 기록 5장 모으기",
+            current = shortRideCount.toFloat(),
+            target = 5f,
+            label = "$shortRideCount / 5회"
+        ),
+        item(
+            title = "통행료 정산러",
+            description = "통행요금이 포함된 영수증 3장 저장하기",
+            current = tollRideCount.toFloat(),
+            target = 3f,
+            label = "$tollRideCount / 3장"
+        ),
+        item(
+            title = "추가요금 협상가",
+            description = "추가요금이 포함된 영수증 3장 저장하기",
+            current = extraFareRideCount.toFloat(),
+            target = 3f,
+            label = "$extraFareRideCount / 3장"
+        ),
+        item(
+            title = "만원 넘는 카풀",
+            description = "총 운행요금 10,000원 이상 영수증 5장 만들기",
+            current = premiumFareCount.toFloat(),
+            target = 5f,
+            label = "$premiumFareCount / 5장"
+        ),
+        item(
+            title = "테마 수집가",
+            description = "서로 다른 테마로 저장된 영수증 5종 모으기",
+            current = themeCount.toFloat(),
+            target = 5f,
+            label = "$themeCount / 5종"
+        ),
+        item(
+            title = "찐 단골 인증",
+            description = "같은 손님과 카풀 기록 10장 쌓기",
+            current = busiestPassengerRideCount.toFloat(),
+            target = 10f,
+            label = "$busiestPassengerRideCount / 10회"
+        ),
+        item(
+            title = "하루 카풀 챌린지",
+            description = "하루에 카풀 영수증 5장 만들기",
+            current = sameDayMaxRideCount.toFloat(),
+            target = 5f,
+            label = "$sameDayMaxRideCount / 5장"
+        )
+    )
+}
 
 private data class FarePolicy(
     val regionName: String,
@@ -3477,10 +6145,13 @@ private fun MeshTheme.backgroundOverlayAlpha(): Float =
     if (this == MeshTheme.Night) 0.40f else 0.60f
 
 private fun MeshTheme.receiptPaperOverlayAlpha(): Float =
-    if (this == MeshTheme.Night) 0.58f else 0.66f
+    0f
 
 private fun MeshTheme.receiptOuterOverlayAlpha(): Float =
-    if (this == MeshTheme.Night) 0.76f else 0.84f
+    if (this == MeshTheme.Night) 0f else 0.84f
+
+private fun RideRecord.receiptThemeOr(defaultTheme: MeshTheme): MeshTheme =
+    MeshTheme.entries.firstOrNull { it.code == themeCode } ?: defaultTheme
 
 private enum class FareRegion(
     val code: String,
