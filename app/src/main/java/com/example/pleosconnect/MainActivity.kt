@@ -121,7 +121,6 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.Font
@@ -1084,11 +1083,8 @@ private fun HomeScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .blur(passengerDialogBlur)
-                .padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+                .padding(start = 18.dp, end = 18.dp, top = 16.dp, bottom = 18.dp)
         ) {
-            TopBar()
-
             HorizontalPager(
                 state = pagerState,
                 modifier = Modifier.weight(1f),
@@ -1096,102 +1092,36 @@ private fun HomeScreen(
             ) { page ->
                 Column(
                     modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     when (page) {
-                        0 -> {
-                            MeterCard(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(570.dp),
-                                passengerName = passengerName,
-                                fare = fare,
-                                isRunning = isRunning,
-                                tripDistanceKm = tripDistanceKm,
-                                elapsedSeconds = elapsedSeconds,
-                                farePolicy = farePolicy,
-                                selectedTheme = selectedTheme,
-                                onEditPassenger = {
-                                    editingPassengerName = passengerName
-                                    passengerDialogVisible = true
+                        0 -> HomeDashboardPage(
+                            passengerName = passengerName,
+                            fare = fare,
+                            isRunning = isRunning,
+                            tripDistanceKm = tripDistanceKm,
+                            elapsedSeconds = elapsedSeconds,
+                            farePolicy = farePolicy,
+                            selectedSurcharge = selectedSurcharge,
+                            selectedTheme = selectedTheme,
+                            currentPage = pagerState.currentPage,
+                            onEditPassenger = {
+                                editingPassengerName = passengerName
+                                passengerDialogVisible = true
+                            },
+                            onStart = onStart,
+                            onStop = onStop,
+                            onGoFareSettings = {
+                                if (isRunning) {
+                                    topNoticeVisible = true
+                                } else {
+                                    onGoFareSettings()
                                 }
-                            )
-
-                            Card(
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = G2RoundedCornerShape(24.dp),
-                                colors = CardDefaults.cardColors(containerColor = GlassWhite),
-                                border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.36f)),
-                                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-                            ) {
-                                Column(modifier = Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        AnimatedActionButton(
-                                            text = "주행시작",
-                                            modifier = Modifier.weight(1f),
-                                            active = !isRunning,
-                                            onClick = onStart
-                                        )
-                                        AnimatedActionButton(
-                                            text = "주행종료",
-                                            modifier = Modifier.weight(1f),
-                                            active = isRunning,
-                                            onClick = onStop
-                                        )
-                                    }
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        GhostButton(
-                                            text = "요금제",
-                                            modifier = Modifier.weight(1f),
-                                            onClick = {
-                                                if (isRunning) {
-                                                    topNoticeVisible = true
-                                                } else {
-                                                    onGoFareSettings()
-                                                }
-                                            }
-                                        )
-                                        GhostButton(
-                                            text = "테마",
-                                            modifier = Modifier.weight(1f),
-                                            onClick = onGoThemeSettings
-                                        )
-                                        GhostButton(
-                                            text = "내역 보기",
-                                            modifier = Modifier.weight(1f),
-                                            onClick = onGoHistory
-                                        )
-                                    }
-                                }
-                            }
-
-                            SurchargeSelector(
-                                selectedSurcharge = selectedSurcharge,
-                                enabled = !isRunning,
-                                onSelectSurcharge = onSelectSurcharge
-                            )
-
-                            HomePagerIndicator(
-                                currentPage = pagerState.currentPage,
-                                pageCount = 3,
-                                modifier = Modifier.fillMaxWidth()
-                            )
-
-                            DriveStatusPanel(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(218.dp),
-                                isRunning = isRunning,
-                                tripDistanceKm = tripDistanceKm,
-                                elapsedSeconds = elapsedSeconds
-                            )
-                        }
+                            },
+                            onGoThemeSettings = onGoThemeSettings,
+                            onGoHistory = onGoHistory,
+                            onSelectSurcharge = onSelectSurcharge
+                        )
 
                         1 -> PassengerWidgetPage(
                             records = records,
@@ -1238,6 +1168,185 @@ private fun HomeScreen(
                 passengerDialogVisible = false
             }
         )
+    }
+}
+
+@Composable
+private fun HomeDashboardPage(
+    passengerName: String,
+    fare: Int,
+    isRunning: Boolean,
+    tripDistanceKm: Float,
+    elapsedSeconds: Long,
+    farePolicy: FarePolicy,
+    selectedSurcharge: SurchargeMode,
+    selectedTheme: MeshTheme,
+    currentPage: Int,
+    onEditPassenger: () -> Unit,
+    onStart: () -> Unit,
+    onStop: () -> Unit,
+    onGoFareSettings: () -> Unit,
+    onGoThemeSettings: () -> Unit,
+    onGoHistory: () -> Unit,
+    onSelectSurcharge: (SurchargeMode) -> Unit
+) {
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val topOffset = 28.dp
+        val bottomOffset = 8.dp
+        val sectionSpacing = 16.dp
+        val actionPanelHeight = 194.dp
+        val surchargeHeight = 138.dp
+        val indicatorSlotHeight = 26.dp
+        val meterHeight = (
+            maxHeight -
+                topOffset -
+                bottomOffset -
+                actionPanelHeight -
+                surchargeHeight -
+                indicatorSlotHeight -
+                sectionSpacing * 3f
+            ).coerceAtLeast(470.dp)
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(top = topOffset, bottom = bottomOffset),
+            verticalArrangement = Arrangement.spacedBy(sectionSpacing)
+        ) {
+            MeterCard(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(meterHeight),
+                passengerName = passengerName,
+                fare = fare,
+                isRunning = isRunning,
+                tripDistanceKm = tripDistanceKm,
+                elapsedSeconds = elapsedSeconds,
+                farePolicy = farePolicy,
+                selectedTheme = selectedTheme,
+                onEditPassenger = onEditPassenger
+            )
+
+            HomeActionPanel(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(actionPanelHeight),
+                isRunning = isRunning,
+                onStart = onStart,
+                onStop = onStop,
+                onGoFareSettings = onGoFareSettings,
+                onGoThemeSettings = onGoThemeSettings,
+                onGoHistory = onGoHistory
+            )
+
+            SurchargeSelector(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(surchargeHeight),
+                selectedSurcharge = selectedSurcharge,
+                enabled = !isRunning,
+                onSelectSurcharge = onSelectSurcharge
+            )
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(indicatorSlotHeight),
+                contentAlignment = Alignment.Center
+            ) {
+                HomePagerIndicator(
+                    currentPage = currentPage,
+                    pageCount = 3,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun HomeActionPanel(
+    modifier: Modifier = Modifier,
+    isRunning: Boolean,
+    onStart: () -> Unit,
+    onStop: () -> Unit,
+    onGoFareSettings: () -> Unit,
+    onGoThemeSettings: () -> Unit,
+    onGoHistory: () -> Unit
+) {
+    Card(
+        modifier = modifier,
+        shape = G2RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = GlassWhite),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.36f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 14.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                AnimatedActionButton(
+                    text = "주행시작",
+                    modifier = Modifier.weight(1f),
+                    active = !isRunning,
+                    onClick = onStart
+                )
+                AnimatedActionButton(
+                    text = "주행종료",
+                    modifier = Modifier.weight(1f),
+                    active = isRunning,
+                    onClick = onStop
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "빠른 메뉴",
+                    modifier = Modifier.width(68.dp),
+                    color = GrayText,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center
+                )
+                CompactGhostButton(text = "요금제", modifier = Modifier.weight(1f), onClick = onGoFareSettings)
+                CompactGhostButton(text = "테마", modifier = Modifier.weight(1f), onClick = onGoThemeSettings)
+                CompactGhostButton(text = "내역 보기", modifier = Modifier.weight(1f), onClick = onGoHistory)
+            }
+        }
+    }
+}
+
+@Composable
+private fun CompactGhostButton(
+    text: String,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    onClick: () -> Unit
+) {
+    Button(
+        modifier = modifier.height(58.dp),
+        onClick = onClick,
+        enabled = enabled,
+        shape = G2RoundedCornerShape(999.dp),
+        elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp, pressedElevation = 0.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = Panel,
+            contentColor = DarkText,
+            disabledContainerColor = Color(0xFFD8DEE8),
+            disabledContentColor = Color(0xFFB8B8B8)
+        )
+    ) {
+        Text(text = text, fontSize = 16.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
     }
 }
 
@@ -2342,6 +2451,58 @@ private fun ResetHistoryDialog(
 }
 
 @Composable
+private fun StandaloneDetailHeader(
+    title: String,
+    subtitle: String? = null,
+    onGoBack: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(18.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(62.dp)
+                .clip(CircleShape)
+                .background(Color.White.copy(alpha = 0.92f))
+                .border(1.dp, Color.White.copy(alpha = 0.76f), CircleShape)
+                .clickable(onClick = onGoBack),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = "←",
+                color = DarkText,
+                fontSize = 34.sp,
+                fontWeight = FontWeight.Black,
+                lineHeight = 34.sp
+            )
+        }
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Text(
+                text = title,
+                color = DarkText,
+                fontSize = 40.sp,
+                fontWeight = FontWeight.Black
+            )
+            if (subtitle != null) {
+                Text(
+                    text = subtitle,
+                    color = GrayText,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun AppInfoScreen(
     selectedTheme: MeshTheme,
     onGoBack: () -> Unit
@@ -2350,37 +2511,7 @@ private fun AppInfoScreen(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(24.dp)
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(18.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(62.dp)
-                    .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.92f))
-                    .border(1.dp, Color.White.copy(alpha = 0.76f), CircleShape)
-                    .clickable(onClick = onGoBack),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "←",
-                    color = DarkText,
-                    fontSize = 34.sp,
-                    fontWeight = FontWeight.Black,
-                    lineHeight = 34.sp
-                )
-            }
-            Text(
-                text = "정보",
-                color = DarkText,
-                fontSize = 40.sp,
-                fontWeight = FontWeight.Black
-            )
-        }
+        StandaloneDetailHeader(title = "정보", onGoBack = onGoBack)
 
         Card(
             modifier = Modifier
@@ -2543,45 +2674,11 @@ private fun DonationScreen(onGoBack: () -> Unit) {
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(22.dp)
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(18.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(62.dp)
-                    .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.92f))
-                    .border(1.dp, Color.White.copy(alpha = 0.76f), CircleShape)
-                    .clickable(onClick = onGoBack),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "←",
-                    color = DarkText,
-                    fontSize = 34.sp,
-                    fontWeight = FontWeight.Black,
-                    lineHeight = 34.sp
-                )
-            }
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    text = "개발자 후원",
-                    color = DarkText,
-                    fontSize = 40.sp,
-                    fontWeight = FontWeight.Black
-                )
-                Text(
-                    text = "커피 한 잔만큼 앱이 더 부드러워져요",
-                    color = GrayText,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Medium
-                )
-            }
-        }
+        StandaloneDetailHeader(
+            title = "개발자 후원",
+            subtitle = "커피 한 잔만큼 앱이 더 부드러워져요",
+            onGoBack = onGoBack
+        )
 
         HorizontalPager(
             state = pagerState,
@@ -3034,69 +3131,108 @@ private fun MeterCard(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(20.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                    .padding(24.dp),
+                verticalArrangement = Arrangement.SpaceBetween
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
                         Text(text = "$passengerName 손님", color = Color.White, fontSize = 31.sp, fontWeight = FontWeight.Black)
                         Text(text = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yy/MM/dd HH:mm")), color = Color.White.copy(alpha = 0.76f), fontSize = 19.sp, fontWeight = FontWeight.Medium)
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        GlassTextChip(
-                            text = "수정",
-                            fontSize = 15.sp,
-                            onClick = onEditPassenger
-                        )
-                        GlassTextChip(
-                            text = farePolicy.label,
-                            fontSize = 17.sp,
-                            horizontalPadding = 14.dp,
-                            verticalPadding = 8.dp
-                        )
-                    }
+                    GlassTextChip(
+                        text = "수정",
+                        fontSize = 15.sp,
+                        onClick = onEditPassenger
+                    )
                 }
 
-                RunningHorse(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(0.8f),
-                    running = isRunning
-                )
-
-                Text(
-                    text = "${fare.formatWon()}원",
+                Column(
                     modifier = Modifier.fillMaxWidth(),
-                    color = Color.White,
-                    fontSize = 70.sp,
-                    fontWeight = FontWeight.Black,
-                    textAlign = TextAlign.End
-                )
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        StatusChip(text = if (isRunning) "실제 주행" else "대기 중", active = isRunning)
+                        StatusChip(text = farePolicy.shortLabel, active = true)
+                    }
+                    Text(
+                        text = "현재 요금",
+                        color = Color.White.copy(alpha = 0.78f),
+                        fontSize = 19.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "${fare.formatWon()}원",
+                        modifier = Modifier.fillMaxWidth(),
+                        color = Color.White,
+                        fontSize = 82.sp,
+                        fontWeight = FontWeight.Black,
+                        textAlign = TextAlign.Center,
+                        lineHeight = 86.sp
+                    )
+                    Text(
+                        text = "${farePolicy.label} · 기본 ${farePolicy.baseDistanceKm}km · ${farePolicy.stepDistanceMeters.toInt()}m당 ${farePolicy.stepFare}원",
+                        modifier = Modifier.fillMaxWidth(),
+                        color = Color.White.copy(alpha = 0.78f),
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center
+                    )
+                }
 
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(Color.White.copy(alpha = 0.92f), G2RoundedCornerShape(22.dp))
-                        .padding(16.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                        .padding(horizontal = 20.dp, vertical = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        StatusChip(text = if (isRunning) "실제 주행" else "대기 중", active = isRunning)
-                        StatusChip(text = farePolicy.shortLabel, active = true)
-                    }
-                    Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(text = "주행거리 ${"%.3f".format(tripDistanceKm)}km", color = DarkText, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                        Text(text = "주행시간 ${elapsedSeconds.formatDuration()}", color = DarkText, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                        Text(text = "기본 ${farePolicy.baseDistanceKm}km · ${farePolicy.stepDistanceMeters.toInt()}m당 ${farePolicy.stepFare}원", color = GrayText, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                    }
+                    MeterMetricItem(
+                        title = "주행시간",
+                        value = elapsedSeconds.formatDuration(),
+                        modifier = Modifier.weight(1f)
+                    )
+                    Box(
+                        modifier = Modifier
+                            .width(1.dp)
+                            .height(46.dp)
+                            .background(Line)
+                    )
+                    MeterMetricItem(
+                        title = "주행거리",
+                        value = "%.3fkm".format(tripDistanceKm),
+                        modifier = Modifier.weight(1f)
+                    )
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun MeterMetricItem(
+    title: String,
+    value: String,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(5.dp)
+    ) {
+        Text(text = title, color = GrayText, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+        Text(text = value, color = DarkText, fontSize = 22.sp, fontWeight = FontWeight.Black)
     }
 }
 
@@ -3169,31 +3305,33 @@ private fun DashboardTile(
 
 @Composable
 private fun SurchargeSelector(
+    modifier: Modifier = Modifier,
     selectedSurcharge: SurchargeMode,
     enabled: Boolean,
     onSelectSurcharge: (SurchargeMode) -> Unit
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = G2RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
+        modifier = modifier,
+        shape = G2RoundedCornerShape(22.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.94f)),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.52f)),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Column(
-            modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(text = "할증 요금제", color = DarkText, fontSize = 21.sp, fontWeight = FontWeight.Bold)
+                Text(text = "할증 요금제", color = DarkText, fontSize = 19.sp, fontWeight = FontWeight.Black)
                 if (!enabled) {
                     Text(
                         text = "주행 중 변경 불가",
                         color = GrayText,
-                        fontSize = 16.sp,
+                        fontSize = 14.sp,
                         fontWeight = FontWeight.Medium
                     )
                 }
@@ -3236,7 +3374,7 @@ private fun SurchargeSelector(
                     Button(
                         modifier = Modifier
                             .weight(1f)
-                            .height(56.dp)
+                            .height(62.dp)
                             .graphicsLayer {
                                 scaleX = scale
                                 scaleY = scale
@@ -3252,7 +3390,7 @@ private fun SurchargeSelector(
                             disabledContentColor = disabledTextColor
                         )
                     ) {
-                        Text(text = mode.buttonText, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                        Text(text = mode.buttonText, fontSize = 17.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -3266,10 +3404,10 @@ private fun FareSettingsScreen(
     onSelectRegion: (FareRegion) -> Unit,
     onGoHome: () -> Unit
 ) {
-    TopBar()
-    PageHeader(
+    StandaloneDetailHeader(
         title = "요금제 선택",
-        subtitle = "주행 지역에 맞는 중형택시 요금제를 선택하세요."
+        subtitle = "주행 지역에 맞는 중형택시 요금제를 선택하세요.",
+        onGoBack = onGoHome
     )
 
     FareRegion.entries.forEach { region ->
@@ -3316,8 +3454,6 @@ private fun FareSettingsScreen(
             }
         }
     }
-
-    OrangeButton(text = "홈으로", modifier = Modifier.fillMaxWidth(), onClick = onGoHome)
 }
 
 @Composable
@@ -3326,10 +3462,10 @@ private fun ThemeSettingsScreen(
     onSelectTheme: (MeshTheme) -> Unit,
     onGoHome: () -> Unit
 ) {
-    TopBar()
-    PageHeader(
+    StandaloneDetailHeader(
         title = "테마",
-        subtitle = "배경을 선택하세요"
+        subtitle = "배경을 선택하세요",
+        onGoBack = onGoHome
     )
 
     MeshTheme.entries.chunked(2).forEach { rowThemes ->
@@ -3350,8 +3486,6 @@ private fun ThemeSettingsScreen(
             }
         }
     }
-
-    OrangeButton(text = "홈으로", modifier = Modifier.fillMaxWidth(), onClick = onGoHome)
 }
 
 @Composable
@@ -4843,7 +4977,9 @@ private fun ReceiptScreen(
     val shredScope = rememberCoroutineScope()
     val shredProgress = remember(item.id) { Animatable(0f) }
     var shredderVisible by remember(item.id) { mutableStateOf(false) }
+    var shredPreparing by remember(item.id) { mutableStateOf(false) }
     var shredding by remember(item.id) { mutableStateOf(false) }
+    var receiptBackVisible by remember(item.id) { mutableStateOf(false) }
     var shredSuccessVisible by remember(item.id) { mutableStateOf(false) }
     val receiptSoundPool = remember(item.id) {
         SoundPool.Builder()
@@ -4900,107 +5036,134 @@ private fun ReceiptScreen(
         }
     }
 
-    val isWideLayout = LocalConfiguration.current.screenWidthDp >= 600
-
     @Composable
     fun ReceiptPane() {
-        AnimatedVisibility(
-            visible = receiptVisible,
-            enter = slideInVertically(
-                animationSpec = tween(durationMillis = 1500, easing = FastOutSlowInEasing),
-                initialOffsetY = { -it - 260 }
-            ) + fadeIn(animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing)),
-            exit = slideOutVertically(
-                animationSpec = tween(durationMillis = 360, easing = FastOutSlowInEasing),
-                targetOffsetY = { -it / 3 }
-            ) + fadeOut(animationSpec = tween(durationMillis = 240, easing = FastOutSlowInEasing))
+        val density = LocalDensity.current
+        val receiptRotation by animateFloatAsState(
+            targetValue = if (receiptBackVisible) 180f else 0f,
+            animationSpec = tween(durationMillis = 520, easing = FastOutSlowInEasing),
+            label = "receiptFlip"
+        )
+        val showingBack = receiptRotation > 90f
+
+        BoxWithConstraints(
+            modifier = Modifier.fillMaxWidth(),
+            contentAlignment = Alignment.TopCenter
         ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(1090.dp)
-                    .padding(horizontal = 8.dp)
+            val shredderWidth = (maxWidth - 16.dp).coerceAtLeast(280.dp)
+            val receiptContentWidth = shredderWidth * 0.82f
+
+            AnimatedVisibility(
+                visible = receiptVisible,
+                enter = slideInVertically(
+                    animationSpec = tween(durationMillis = 1500, easing = FastOutSlowInEasing),
+                    initialOffsetY = { -it - 260 }
+                ) + fadeIn(animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing)),
+                exit = slideOutVertically(
+                    animationSpec = tween(durationMillis = 360, easing = FastOutSlowInEasing),
+                    targetOffsetY = { -it / 3 }
+                ) + fadeOut(animationSpec = tween(durationMillis = 240, easing = FastOutSlowInEasing))
             ) {
                 Box(
                     modifier = Modifier
-                        .fillMaxSize()
-                        .clip(ReceiptPaperShape())
+                        .width(receiptContentWidth)
+                        .height(1090.dp)
+                        .graphicsLayer {
+                            rotationY = receiptRotation
+                            cameraDistance = 18f * density.density
+                        }
                 ) {
-                    Image(
-                        painter = painterResource(id = receiptTheme.drawableRes),
-                        contentDescription = null,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop
-                    )
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(Color.White.copy(alpha = receiptTheme.receiptPaperOverlayAlpha()))
-                    )
-                    if (isNightReceipt) {
+                    if (showingBack) {
+                        ReceiptBackPaper(
+                            selectedTheme = receiptTheme,
+                            isNightReceipt = isNightReceipt,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .graphicsLayer { rotationY = 180f }
+                        )
+                    } else {
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .background(Color.Black.copy(alpha = 0.28f))
-                        )
-                    }
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(start = 38.dp, end = 38.dp, top = 26.dp, bottom = 110.dp),
-                        verticalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(verticalArrangement = Arrangement.spacedBy(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                .clip(ReceiptPaperShape())
+                        ) {
+                            Image(
+                                painter = painterResource(id = receiptTheme.drawableRes),
+                                contentDescription = null,
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = ContentScale.Crop
+                            )
                             Box(
                                 modifier = Modifier
-                                    .width(230.dp)
-                                    .height(18.dp)
-                                    .background(Color(0xFF5A5F6A), G2RoundedCornerShape(7.dp))
+                                    .fillMaxSize()
+                                    .background(Color.White.copy(alpha = receiptTheme.receiptPaperOverlayAlpha()))
                             )
-                            GlassIconContainer(symbol = "♞", size = 52.dp, fontSize = 28.sp)
-                            Text(text = "카풀 영수증", color = receiptTextColor, fontSize = 34.sp, fontWeight = FontWeight.Black)
-                            DashedLine(color = receiptStrongLineColor, thickness = 2)
-                        }
+                            if (isNightReceipt) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .background(Color.Black.copy(alpha = 0.28f))
+                                )
+                            }
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(start = 38.dp, end = 38.dp, top = 26.dp, bottom = 110.dp),
+                                verticalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(verticalArrangement = Arrangement.spacedBy(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Box(
+                                        modifier = Modifier
+                                            .width(230.dp)
+                                            .height(18.dp)
+                                            .background(Color(0xFF5A5F6A), G2RoundedCornerShape(7.dp))
+                                    )
+                                    GlassIconContainer(symbol = "♞", size = 52.dp, fontSize = 28.sp)
+                                    Text(text = "카풀 영수증", color = receiptTextColor, fontSize = 34.sp, fontWeight = FontWeight.Black)
+                                    DashedLine(color = receiptStrongLineColor, thickness = 2)
+                                }
 
-                        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                            Text(text = "${item.passengerName} 손님,", color = receiptTextColor, fontSize = 40.sp, fontWeight = FontWeight.Black)
-                            Text(text = "카풀미터기를 이용해주셔서 감사합니다", color = receiptMutedColor, fontSize = 20.sp, fontWeight = FontWeight.Medium)
-                            ThickLine(color = receiptStrongLineColor)
-                        }
+                                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                                    Text(text = "${item.passengerName} 손님,", color = receiptTextColor, fontSize = 40.sp, fontWeight = FontWeight.Black)
+                                    Text(text = "카풀미터기를 이용해주셔서 감사합니다", color = receiptMutedColor, fontSize = 20.sp, fontWeight = FontWeight.Medium)
+                                    ThickLine(color = receiptStrongLineColor)
+                                }
 
-                        Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
-                            ReceiptRow("탑승일자", item.date, textColor = receiptTextColor, valueColor = receiptTextColor, amountColor = receiptAmountColor)
-                            ReceiptRow("하차시각", item.endTime, textColor = receiptTextColor, valueColor = receiptTextColor, amountColor = receiptAmountColor)
-                            DashedLine(color = receiptSoftLineColor)
-                            ReceiptRow("총 주행 시간", item.durationSeconds.formatDuration(), textColor = receiptTextColor, valueColor = receiptTextColor, amountColor = receiptAmountColor)
-                            ReceiptRow("총 주행 거리", "%.1fkm".format(item.distanceKm), textColor = receiptTextColor, valueColor = receiptTextColor, amountColor = receiptAmountColor)
-                            ReceiptRow("운행요금", "${item.rideFare.formatWon()}원", textColor = receiptTextColor, valueColor = receiptTextColor, amountColor = receiptAmountColor)
-                            DashedLine(color = receiptSoftLineColor)
-                            ReceiptRow("통행요금", "${item.tollFare.formatWon()}원", textColor = receiptTextColor, valueColor = receiptTextColor, amountColor = receiptAmountColor)
-                            ReceiptRow("추가요금", "${item.extraFare.formatWon()}원", textColor = receiptTextColor, valueColor = receiptTextColor, amountColor = receiptAmountColor)
-                        }
+                                Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
+                                    ReceiptRow("탑승일자", item.date, textColor = receiptTextColor, valueColor = receiptTextColor, amountColor = receiptAmountColor)
+                                    ReceiptRow("하차시각", item.endTime, textColor = receiptTextColor, valueColor = receiptTextColor, amountColor = receiptAmountColor)
+                                    DashedLine(color = receiptSoftLineColor)
+                                    ReceiptRow("총 주행 시간", item.durationSeconds.formatDuration(), textColor = receiptTextColor, valueColor = receiptTextColor, amountColor = receiptAmountColor)
+                                    ReceiptRow("총 주행 거리", "%.1fkm".format(item.distanceKm), textColor = receiptTextColor, valueColor = receiptTextColor, amountColor = receiptAmountColor)
+                                    ReceiptRow("운행요금", "${item.rideFare.formatWon()}원", textColor = receiptTextColor, valueColor = receiptTextColor, amountColor = receiptAmountColor)
+                                    DashedLine(color = receiptSoftLineColor)
+                                    ReceiptRow("통행요금", "${item.tollFare.formatWon()}원", textColor = receiptTextColor, valueColor = receiptTextColor, amountColor = receiptAmountColor)
+                                    ReceiptRow("추가요금", "${item.extraFare.formatWon()}원", textColor = receiptTextColor, valueColor = receiptTextColor, amountColor = receiptAmountColor)
+                                }
 
-                        Column(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalArrangement = Arrangement.spacedBy(14.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            DashedLine(color = receiptStrongLineColor, thickness = 2)
-                            Text(text = "총 운행요금", color = receiptMutedColor, fontSize = 24.sp, fontWeight = FontWeight.Black)
-                            Text(text = "${item.totalFare.formatWon()}원", modifier = Modifier.fillMaxWidth(), color = receiptAmountColor, fontSize = 82.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.End)
+                                Column(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    DashedLine(color = receiptStrongLineColor, thickness = 2)
+                                    Text(text = "총 운행요금", color = receiptMutedColor, fontSize = 24.sp, fontWeight = FontWeight.Black)
+                                    Text(text = "${item.totalFare.formatWon()}원", modifier = Modifier.fillMaxWidth(), color = receiptAmountColor, fontSize = 82.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.End)
+                                }
+                            }
+                            Canvas(modifier = Modifier.fillMaxSize()) {
+                                val toothWidth = 26f
+                                val cutDepth = 17f
+                                val paperBottom = size.height - cutDepth - 9f
+                                drawPath(
+                                    path = pinkingEdgePath(size, toothWidth, cutDepth, paperBottom),
+                                    color = Color(0x664A5364),
+                                    style = Stroke(width = 2f, cap = StrokeCap.Round)
+                                )
+                            }
+                            ShreddedReceiptOverlay(progress = shredProgress.value)
                         }
                     }
-                    Canvas(modifier = Modifier.fillMaxSize()) {
-                        val toothWidth = 26f
-                        val cutDepth = 17f
-                        val paperBottom = size.height - cutDepth - 9f
-                        drawPath(
-                            path = pinkingEdgePath(size, toothWidth, cutDepth, paperBottom),
-                            color = Color(0x664A5364),
-                            style = Stroke(width = 2f, cap = StrokeCap.Round)
-                        )
-                    }
-                    ShreddedReceiptOverlay(progress = shredProgress.value)
                 }
             }
         }
@@ -5008,7 +5171,7 @@ private fun ReceiptScreen(
 
     @Composable
     fun ReceiptActions(modifier: Modifier = Modifier) {
-        if (!shredding && !shredSuccessVisible) {
+        if (!shredderVisible && !shredPreparing && !shredding && !shredSuccessVisible) {
             if (receiptVisible) {
                 Row(
                     modifier = modifier,
@@ -5020,6 +5183,7 @@ private fun ReceiptScreen(
                         modifier = Modifier.width(132.dp),
                         onClick = {
                             if (!shredSuccessVisible) {
+                                receiptBackVisible = true
                                 shredderVisible = true
                             }
                         }
@@ -5041,12 +5205,16 @@ private fun ReceiptScreen(
             progress = shredProgress.value,
             shredding = shredding,
             onShred = {
-                if (!shredding) {
-                    shredderVisible = true
-                    shredding = true
-                    papercutPlayRequest += 1
+                if (!shredding && !shredPreparing) {
+                    shredPreparing = true
+                    shredderVisible = false
+                    receiptBackVisible = false
                     shredScope.launch {
+                        kotlinx.coroutines.delay(560L)
+                        shredding = true
+                        papercutPlayRequest += 1
                         shredProgress.snapTo(0f)
+                        kotlinx.coroutines.delay(260L)
                         var progress = 0f
                         while (progress < 1f) {
                             kotlinx.coroutines.delay(Random.nextLong(50L, 151L))
@@ -5064,6 +5232,7 @@ private fun ReceiptScreen(
                         kotlinx.coroutines.delay(360L)
                         shredderVisible = false
                         shredding = false
+                        shredPreparing = false
                         onShredRecord(item)
                         shredSuccessVisible = true
                         kotlinx.coroutines.delay(900L)
@@ -5074,8 +5243,9 @@ private fun ReceiptScreen(
                 }
             },
             onCancel = {
-                if (!shredding) {
+                if (!shredding && !shredPreparing) {
                     shredderVisible = false
+                    receiptBackVisible = false
                 }
             },
             modifier = shredderModifier
@@ -5088,56 +5258,89 @@ private fun ReceiptScreen(
     }
 
     Box(modifier = Modifier.fillMaxWidth()) {
-        if (isWideLayout) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    ReceiptPane()
-                }
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(1090.dp)
-                ) {
-                    ReceiptActions(
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .fillMaxWidth()
-                            .widthIn(max = 400.dp)
-                    )
-                    ShredderLayer(
-                        shredderModifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .zIndex(8f),
-                        toastModifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .padding(bottom = 96.dp)
-                            .zIndex(9f)
-                    )
-                }
-            }
-        } else {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                ReceiptPane()
-                ReceiptActions(modifier = Modifier.fillMaxWidth())
-            }
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            ReceiptPane()
+            ReceiptActions(modifier = Modifier.fillMaxWidth())
+        }
 
-            ShredderLayer(
-                shredderModifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .zIndex(8f),
-                toastModifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 96.dp)
-                    .zIndex(9f)
+        ShredderLayer(
+            shredderModifier = Modifier
+                .align(Alignment.BottomCenter)
+                .zIndex(8f),
+            toastModifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 96.dp)
+                .zIndex(9f)
+        )
+    }
+}
+
+@Composable
+private fun ReceiptBackPaper(
+    selectedTheme: MeshTheme,
+    isNightReceipt: Boolean,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .clip(ReceiptPaperShape())
+            .border(1.dp, Color.White.copy(alpha = 0.45f), ReceiptPaperShape())
+    ) {
+        Image(
+            painter = painterResource(id = selectedTheme.drawableRes),
+            contentDescription = null,
+            modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.Crop
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.White.copy(alpha = if (isNightReceipt) 0.08f else 0.18f))
+        )
+        if (isNightReceipt) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.28f))
+            )
+        }
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(start = 38.dp, end = 38.dp, top = 34.dp, bottom = 110.dp),
+            verticalArrangement = Arrangement.SpaceBetween,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(230.dp)
+                    .height(18.dp)
+                    .background(Color(0xFF5A5F6A), G2RoundedCornerShape(7.dp))
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .padding(vertical = 44.dp)
+                    .background(Color.White.copy(alpha = 0.10f), G2RoundedCornerShape(28.dp))
+                    .border(1.dp, Color.White.copy(alpha = 0.22f), G2RoundedCornerShape(28.dp))
+            )
+            DashedLine(
+                color = if (isNightReceipt) Color.White.copy(alpha = 0.42f) else Color(0x5530343B),
+                thickness = 2
+            )
+        }
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val toothWidth = 26f
+            val cutDepth = 17f
+            val paperBottom = size.height - cutDepth - 9f
+            drawPath(
+                path = pinkingEdgePath(size, toothWidth, cutDepth, paperBottom),
+                color = Color(0x664A5364),
+                style = Stroke(width = 2f, cap = StrokeCap.Round)
             )
         }
     }
@@ -5220,11 +5423,9 @@ private fun ShredderSheet(
     onCancel: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val riseOffset = (-920f * progress.coerceIn(0f, 1f)).dp
-
     AnimatedVisibility(
         visible = visible,
-        modifier = modifier,
+        modifier = modifier.fillMaxWidth(),
         enter = slideInVertically(
             animationSpec = tween(durationMillis = 430, easing = FastOutSlowInEasing),
             initialOffsetY = { it + 120 }
@@ -5234,48 +5435,62 @@ private fun ShredderSheet(
             targetOffsetY = { it + 80 }
         ) + fadeOut(animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing))
     ) {
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .widthIn(max = 400.dp)
-                .offset(y = if (shredding) riseOffset else 0.dp)
-                .padding(horizontal = 8.dp, vertical = 8.dp),
-            shape = G2RoundedCornerShape(24.dp),
-            colors = CardDefaults.cardColors(containerColor = Color.Transparent),
-            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+        BoxWithConstraints(
+            modifier = Modifier.fillMaxWidth(),
+            contentAlignment = Alignment.BottomCenter
         ) {
+            val receiptHorizontalPadding = 8.dp
+            val sheetWidth = ((maxWidth - receiptHorizontalPadding * 2f) * 0.86f).coerceAtLeast(280.dp)
+            val sheetHeight = sheetWidth * (446f / 559f)
+            val restingOffset = sheetHeight * 0.56f
+            val riseOffset = -(sheetHeight + 140.dp) * progress.coerceIn(0f, 1f)
+            val compact = sheetWidth < 420.dp
+            val shredderImageScaleX = 1.3f
+            val buttonStackWidth = sheetWidth * if (compact) 0.62f else 0.64f
+            val buttonHeight = if (compact) 34.dp else 42.dp
+            val buttonTopPadding = if (compact) sheetHeight * 0.34f else sheetHeight * 0.36f
+
             Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(562f / 444f)
+                    .width(sheetWidth)
+                    .offset(y = restingOffset + if (shredding) riseOffset else 0.dp)
+                    .aspectRatio(559f / 446f)
+                    .clipToBounds()
             ) {
                 Image(
-                    painter = painterResource(id = if (shredding) R.drawable.pas2 else R.drawable.pas1),
+                    painter = painterResource(id = if (shredding) R.drawable.papercut2 else R.drawable.papercut3),
                     contentDescription = null,
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer { scaleX = shredderImageScaleX },
                     contentScale = ContentScale.FillBounds
                 )
 
                 if (!shredding) {
+                    Text(
+                        text = "영수증을 파쇄하시겠습니까?",
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .padding(top = if (compact) 38.dp else 52.dp),
+                        color = Color(0xFF4F565C),
+                        fontSize = if (compact) 19.sp else 22.sp,
+                        fontWeight = FontWeight.Black,
+                        textAlign = TextAlign.Center,
+                        lineHeight = if (compact) 24.sp else 28.sp
+                    )
+
                     Column(
                         modifier = Modifier
-                            .fillMaxSize()
-                            .padding(start = 54.dp, end = 54.dp, top = 64.dp, bottom = 42.dp),
+                            .align(Alignment.TopCenter)
+                            .width(buttonStackWidth)
+                            .padding(top = buttonTopPadding),
+                        verticalArrangement = Arrangement.spacedBy(if (compact) 5.dp else 8.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Text(
-                            text = "영수증을 파쇄하시겠습니까?",
-                            color = Color(0xFF4F565C),
-                            fontSize = 23.sp,
-                            fontWeight = FontWeight.Black,
-                            textAlign = TextAlign.Center,
-                            lineHeight = 29.sp
-                        )
-                        Spacer(modifier = Modifier.weight(1f))
                         Button(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(66.dp),
+                                .height(buttonHeight),
                             onClick = onShred,
                             enabled = !shredding,
                             shape = G2RoundedCornerShape(17.dp),
@@ -5287,13 +5502,12 @@ private fun ShredderSheet(
                                 disabledContentColor = Color.White
                             )
                         ) {
-                            Text(text = "파쇄하기", fontSize = 25.sp, fontWeight = FontWeight.Black)
+                            Text(text = "파쇄하기", fontSize = if (compact) 16.sp else 18.sp, fontWeight = FontWeight.Black)
                         }
-                        Spacer(modifier = Modifier.height(22.dp))
                         Button(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(66.dp),
+                                .height(buttonHeight),
                             onClick = onCancel,
                             enabled = !shredding,
                             shape = G2RoundedCornerShape(17.dp),
@@ -5306,7 +5520,7 @@ private fun ShredderSheet(
                                 disabledContentColor = Color(0x884C555D)
                             )
                         ) {
-                            Text(text = "취소", fontSize = 23.sp, fontWeight = FontWeight.Black)
+                            Text(text = "취소", fontSize = if (compact) 15.sp else 17.sp, fontWeight = FontWeight.Black)
                         }
                     }
                 }
@@ -5644,7 +5858,7 @@ private fun AnimatedActionButton(text: String, modifier: Modifier = Modifier, ac
     val shape = G2RoundedCornerShape(999.dp)
     Button(
         modifier = modifier
-            .height(62.dp),
+            .height(76.dp),
         onClick = onClick,
         enabled = active,
         shape = shape,
@@ -6232,6 +6446,3 @@ private val AstaTypography = Typography(
     labelMedium = DefaultTypography.labelMedium.copy(fontFamily = AstaSans),
     labelSmall = DefaultTypography.labelSmall.copy(fontFamily = AstaSans)
 )
-
-
-
