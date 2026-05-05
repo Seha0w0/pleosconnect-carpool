@@ -51,11 +51,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -71,7 +73,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -82,7 +83,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.Typography
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
@@ -230,6 +230,9 @@ class MainActivity : ComponentActivity() {
     private var selectedRegion by mutableStateOf(FareRegion.SEOUL)
     private var selectedSurcharge by mutableStateOf(SurchargeMode.Normal)
     private var selectedTheme by mutableStateOf(MeshTheme.Pearl)
+    private var useCustomFare by mutableStateOf(false)
+    private var customBaseFare by mutableIntStateOf(4800)
+    private var customStepFare by mutableIntStateOf(100)
     private var homeInitialPage by mutableIntStateOf(0)
 
     private var currentFare by mutableIntStateOf(0)
@@ -260,7 +263,10 @@ class MainActivity : ComponentActivity() {
         passengerWidgets.addAll(loadPassengerWidgets())
         selectedRegion = loadSelectedRegion()
         selectedTheme = loadSelectedTheme()
-        farePolicy = FarePolicy.from(selectedRegion, selectedSurcharge)
+        useCustomFare = loadUseCustomFare()
+        customBaseFare = loadCustomBaseFare()
+        customStepFare = loadCustomStepFare()
+        farePolicy = activeFarePolicy()
 
         vehicle = Vehicle(this)
         vehicle.initialize()
@@ -292,6 +298,9 @@ class MainActivity : ComponentActivity() {
                 selectedRegion = selectedRegion,
                 selectedSurcharge = selectedSurcharge,
                 selectedTheme = selectedTheme,
+                useCustomFare = useCustomFare,
+                customBaseFare = customBaseFare,
+                customStepFare = customStepFare,
                 historyReturnScreen = historyReturnScreen,
                 historyWidgetSelectionMode = historyWidgetSelectionMode,
                 selectedWidgetPassengerName = selectedWidgetPassengerName,
@@ -322,18 +331,30 @@ class MainActivity : ComponentActivity() {
                         AppScreen.Home
                     }
                 },
-                onGoFareSettings = { screen = AppScreen.FareSettings },
+                onGoFareSettings = { screen = AppScreen.FareModeSelect },
+                onGoRegionFareSettings = { screen = AppScreen.FareSettings },
+                onGoCustomFareSettings = { screen = AppScreen.CustomFareSettings },
                 onGoThemeSettings = { screen = AppScreen.ThemeSettings },
                 onSelectRegion = {
+                    useCustomFare = false
                     selectedRegion = it
-                    farePolicy = FarePolicy.from(selectedRegion, selectedSurcharge)
+                    farePolicy = activeFarePolicy()
                     saveSelectedRegion(it)
+                    saveUseCustomFare(false)
                     screen = AppScreen.Home
+                },
+                onSelectCustomFare = { baseFare, stepFare ->
+                    useCustomFare = true
+                    customBaseFare = baseFare
+                    customStepFare = stepFare
+                    farePolicy = activeFarePolicy()
+                    saveUseCustomFare(true)
+                    saveCustomFare(baseFare, stepFare)
                 },
                 onSelectSurcharge = {
                     if (!isRunning) {
                         selectedSurcharge = it
-                        farePolicy = FarePolicy.from(selectedRegion, selectedSurcharge)
+                        farePolicy = activeFarePolicy()
                     }
                 },
                 onSelectTheme = {
@@ -349,6 +370,7 @@ class MainActivity : ComponentActivity() {
                     screen = AppScreen.Receipt
                 },
                 onShredRecord = { shredRideRecord(it) },
+                onSettleRecord = { settleRideRecord(it) },
                 onGoWidgetPicker = {
                     historyWidgetSelectionMode = true
                     selectedWidgetPassengerName = null
@@ -393,6 +415,7 @@ class MainActivity : ComponentActivity() {
                 onGoDonation = {
                     screen = AppScreen.Donation
                 },
+                onResetHistory = { resetRideHistory() },
                 onGoSettingsPage = {
                     homeInitialPage = 2
                     screen = AppScreen.Home
@@ -402,7 +425,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startRide() {
-        farePolicy = FarePolicy.from(selectedRegion, selectedSurcharge)
+        farePolicy = activeFarePolicy()
         currentFare = farePolicy.baseFare
         startDistanceKm = currentDistanceKm
         testDistanceKm = currentDistanceKm ?: 500f
@@ -468,6 +491,17 @@ class MainActivity : ComponentActivity() {
         return max(0f, current - start)
     }
 
+    private fun activeFarePolicy(): FarePolicy =
+        if (useCustomFare) {
+            FarePolicy.custom(
+                baseFare = customBaseFare,
+                stepFare = customStepFare,
+                surchargeMode = selectedSurcharge
+            )
+        } else {
+            FarePolicy.from(selectedRegion, selectedSurcharge)
+        }
+
     private fun savePendingRide() {
         val pending = pendingRide ?: return
         val tollFare = tollText.toIntOrNull() ?: 0
@@ -483,7 +517,8 @@ class MainActivity : ComponentActivity() {
             tollFare = tollFare,
             extraFare = extraFare,
             totalFare = pending.rideFare + tollFare + extraFare,
-            themeCode = selectedTheme.code
+            themeCode = selectedTheme.code,
+            isSettled = false
         )
 
         rideRecords.add(0, record)
@@ -504,6 +539,27 @@ class MainActivity : ComponentActivity() {
     private fun shredRideRecord(record: RideRecord) {
         rideRecords.removeAll { it.id == record.id }
         saveRideRecords(rideRecords)
+    }
+
+    private fun settleRideRecord(record: RideRecord) {
+        val index = rideRecords.indexOfFirst { it.id == record.id }
+        if (index == -1) return
+
+        val settledRecord = rideRecords[index].copy(isSettled = true)
+        rideRecords[index] = settledRecord
+        if (selectedRecord?.id == settledRecord.id) {
+            selectedRecord = settledRecord
+        }
+        saveRideRecords(rideRecords)
+    }
+
+    private fun resetRideHistory() {
+        rideRecords.clear()
+        saveRideRecords(rideRecords)
+        selectedRecord = null
+        selectedPassengerName = null
+        selectedWidgetPassengerName = null
+        historyWidgetSelectionMode = false
     }
 
     private fun addSelectedPassengerWidget() {
@@ -551,7 +607,8 @@ class MainActivity : ComponentActivity() {
                     tollFare = item.getInt("tollFare"),
                     extraFare = item.getInt("extraFare"),
                     totalFare = item.getInt("totalFare"),
-                    themeCode = item.optString("themeCode", MeshTheme.Pearl.code)
+                    themeCode = item.optString("themeCode", MeshTheme.Pearl.code),
+                    isSettled = item.optBoolean("isSettled", false)
                 )
             }
         }.getOrDefault(emptyList())
@@ -573,6 +630,7 @@ class MainActivity : ComponentActivity() {
                     .put("extraFare", record.extraFare)
                     .put("totalFare", record.totalFare)
                     .put("themeCode", record.themeCode)
+                    .put("isSettled", record.isSettled)
             )
         }
         getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -618,6 +676,30 @@ class MainActivity : ComponentActivity() {
             .apply()
     }
 
+    private fun loadUseCustomFare(): Boolean =
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean(KEY_USE_CUSTOM_FARE, false)
+
+    private fun saveUseCustomFare(value: Boolean) {
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_USE_CUSTOM_FARE, value)
+            .apply()
+    }
+
+    private fun loadCustomBaseFare(): Int =
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getInt(KEY_CUSTOM_BASE_FARE, 4800)
+
+    private fun loadCustomStepFare(): Int =
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getInt(KEY_CUSTOM_STEP_FARE, 100)
+
+    private fun saveCustomFare(baseFare: Int, stepFare: Int) {
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putInt(KEY_CUSTOM_BASE_FARE, baseFare)
+            .putInt(KEY_CUSTOM_STEP_FARE, stepFare)
+            .apply()
+    }
+
     private fun loadSelectedTheme(): MeshTheme {
         val code = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString(KEY_THEME, MeshTheme.Pearl.code)
         return MeshTheme.entries.firstOrNull { it.code == code } ?: MeshTheme.Pearl
@@ -642,6 +724,9 @@ class MainActivity : ComponentActivity() {
         private const val KEY_REGION = "selected_fare_region"
         private const val KEY_THEME = "selected_mesh_theme"
         private const val KEY_PASSENGER_WIDGETS = "passenger_widgets_json"
+        private const val KEY_USE_CUSTOM_FARE = "use_custom_fare"
+        private const val KEY_CUSTOM_BASE_FARE = "custom_base_fare"
+        private const val KEY_CUSTOM_STEP_FARE = "custom_step_fare"
     }
 }
 
@@ -665,6 +750,9 @@ private fun CarpoolMeterApp(
     selectedRegion: FareRegion,
     selectedSurcharge: SurchargeMode,
     selectedTheme: MeshTheme,
+    useCustomFare: Boolean,
+    customBaseFare: Int,
+    customStepFare: Int,
     historyReturnScreen: AppScreen,
     historyWidgetSelectionMode: Boolean,
     selectedWidgetPassengerName: String?,
@@ -680,8 +768,11 @@ private fun CarpoolMeterApp(
     onGoHistory: () -> Unit,
     onGoHistoryBack: () -> Unit,
     onGoFareSettings: () -> Unit,
+    onGoRegionFareSettings: () -> Unit,
+    onGoCustomFareSettings: () -> Unit,
     onGoThemeSettings: () -> Unit,
     onSelectRegion: (FareRegion) -> Unit,
+    onSelectCustomFare: (Int, Int) -> Unit,
     onSelectSurcharge: (SurchargeMode) -> Unit,
     onSelectTheme: (MeshTheme) -> Unit,
     onTollChange: (String) -> Unit,
@@ -689,6 +780,7 @@ private fun CarpoolMeterApp(
     onSaveRide: () -> Unit,
     onSelectRecord: (RideRecord) -> Unit,
     onShredRecord: (RideRecord) -> Unit,
+    onSettleRecord: (RideRecord) -> Unit,
     onGoWidgetPicker: () -> Unit,
     onSelectWidgetPassenger: (String) -> Unit,
     onAddWidgetPassenger: () -> Unit,
@@ -705,6 +797,7 @@ private fun CarpoolMeterApp(
     onGoHomePassengerPage: () -> Unit,
     onGoInfo: () -> Unit,
     onGoDonation: () -> Unit,
+    onResetHistory: () -> Unit,
     onGoSettingsPage: () -> Unit
 ) {
     LaunchedEffect(globalNoticeText) {
@@ -802,13 +895,30 @@ private fun CarpoolMeterApp(
                                 passengerName = selectedPassengerName,
                                 records = records,
                                 selectedTheme = selectedTheme,
-                                onGoBack = onGoHomePassengerPage
+                                onGoBack = onGoHomePassengerPage,
+                                onShredRecord = onShredRecord,
+                                onSettleRecord = onSettleRecord
+                            )
+                        } else if (targetScreen == AppScreen.FareModeSelect) {
+                            FareModeSelectScreen(
+                                onGoRegionalFare = onGoRegionFareSettings,
+                                onGoCustomFare = onGoCustomFareSettings,
+                                onGoBack = onGoHome
+                            )
+                        } else if (targetScreen == AppScreen.CustomFareSettings) {
+                            CustomFareSettingsScreen(
+                                baseFare = customBaseFare,
+                                stepFare = customStepFare,
+                                useCustomFare = useCustomFare,
+                                onSelectCustomFare = onSelectCustomFare,
+                                onGoBack = onGoFareSettings,
+                                onGoHome = onGoHome
                             )
                         } else {
                             BouncyScrollableColumn(
                                 modifier = Modifier
                                     .fillMaxSize()
-                                    .padding(18.dp),
+                                    .padding(start = 18.dp, end = 18.dp, top = 44.dp, bottom = 18.dp),
                                 verticalArrangement = Arrangement.spacedBy(14.dp)
                             ) {
                                 when (targetScreen) {
@@ -857,7 +967,8 @@ private fun CarpoolMeterApp(
                                         selectedTheme = selectedTheme,
                                         onGoHistory = onGoHistory,
                                         onGoHome = onGoHome,
-                                        onShredRecord = onShredRecord
+                                        onShredRecord = onShredRecord,
+                                        onSettleRecord = onSettleRecord
                                     )
 
                                     AppScreen.FareSettings -> FareSettingsScreen(
@@ -885,7 +996,8 @@ private fun CarpoolMeterApp(
 
                                     AppScreen.AppInfo -> AppInfoScreen(
                                         selectedTheme = selectedTheme,
-                                        onGoBack = onGoSettingsPage
+                                        onGoBack = onGoSettingsPage,
+                                        onResetHistory = onResetHistory
                                     )
 
                                     AppScreen.Donation -> DonationScreen(
@@ -893,6 +1005,8 @@ private fun CarpoolMeterApp(
                                     )
 
                                     AppScreen.PassengerReceiptBoard -> Unit
+                                    AppScreen.FareModeSelect -> Unit
+                                    AppScreen.CustomFareSettings -> Unit
                                     AppScreen.Home -> Unit
                                 }
                             }
@@ -1091,7 +1205,9 @@ private fun HomeScreen(
                 pageSpacing = 14.dp
             ) { page ->
                 Column(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(top = if (page == 0) 0.dp else 28.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     when (page) {
@@ -1191,12 +1307,13 @@ private fun HomeDashboardPage(
     onSelectSurcharge: (SurchargeMode) -> Unit
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        val topOffset = 28.dp
-        val bottomOffset = 8.dp
-        val sectionSpacing = 16.dp
-        val actionPanelHeight = 194.dp
-        val surchargeHeight = 138.dp
-        val indicatorSlotHeight = 26.dp
+        val expandedLayout = maxWidth >= 700.dp
+        val topOffset = HomePagerTopPadding
+        val bottomOffset = HomePagerBottomPadding
+        val sectionSpacing = HomePagerSectionSpacing
+        val actionPanelHeight = if (expandedLayout) 216.dp else 204.dp
+        val surchargeHeight = if (expandedLayout) 156.dp else 148.dp
+        val indicatorSlotHeight = HomePagerIndicatorSlotHeight
         val meterHeight = (
             maxHeight -
                 topOffset -
@@ -1248,18 +1365,7 @@ private fun HomeDashboardPage(
                 onSelectSurcharge = onSelectSurcharge
             )
 
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(indicatorSlotHeight),
-                contentAlignment = Alignment.Center
-            ) {
-                HomePagerIndicator(
-                    currentPage = currentPage,
-                    pageCount = 3,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
+            HomePagerIndicatorSlot(currentPage = currentPage)
         }
     }
 }
@@ -1276,51 +1382,57 @@ private fun HomeActionPanel(
 ) {
     Card(
         modifier = modifier,
-        shape = G2RoundedCornerShape(24.dp),
+        shape = G2RoundedCornerShape(22.dp),
         colors = CardDefaults.cardColors(containerColor = GlassWhite),
         border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.36f)),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 14.dp, vertical = 14.dp),
-            verticalArrangement = Arrangement.SpaceBetween
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                AnimatedActionButton(
-                    text = "주행시작",
-                    modifier = Modifier.weight(1f),
-                    active = !isRunning,
-                    onClick = onStart
-                )
-                AnimatedActionButton(
-                    text = "주행종료",
-                    modifier = Modifier.weight(1f),
-                    active = isRunning,
-                    onClick = onStop
-                )
-            }
+        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+            val expandedPanel = maxWidth >= 700.dp
+            val primaryButtonHeight = if (expandedPanel) 88.dp else 78.dp
+            val secondaryButtonHeight = if (expandedPanel) 66.dp else 58.dp
+            val primaryButtonFont = if (expandedPanel) 21.sp else 19.sp
+            val secondaryButtonFont = if (expandedPanel) 19.sp else 17.sp
+            val panelPadding = if (expandedPanel) 16.dp else 14.dp
+            val buttonGap = if (expandedPanel) 14.dp else 12.dp
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = panelPadding, vertical = panelPadding),
+                verticalArrangement = Arrangement.SpaceBetween
             ) {
-                Text(
-                    text = "빠른 메뉴",
-                    modifier = Modifier.width(68.dp),
-                    color = GrayText,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold,
-                    textAlign = TextAlign.Center
-                )
-                CompactGhostButton(text = "요금제", modifier = Modifier.weight(1f), onClick = onGoFareSettings)
-                CompactGhostButton(text = "테마", modifier = Modifier.weight(1f), onClick = onGoThemeSettings)
-                CompactGhostButton(text = "내역 보기", modifier = Modifier.weight(1f), onClick = onGoHistory)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(buttonGap)
+                ) {
+                    AnimatedActionButton(
+                        text = "주행시작",
+                        modifier = Modifier.weight(1f),
+                        active = !isRunning,
+                        height = primaryButtonHeight,
+                        fontSize = primaryButtonFont,
+                        onClick = onStart
+                    )
+                    AnimatedActionButton(
+                        text = "주행종료",
+                        modifier = Modifier.weight(1f),
+                        active = isRunning,
+                        height = primaryButtonHeight,
+                        fontSize = primaryButtonFont,
+                        onClick = onStop
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(buttonGap),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    CompactGhostButton(text = "요금제 설정", modifier = Modifier.weight(1f), height = secondaryButtonHeight, fontSize = secondaryButtonFont, onClick = onGoFareSettings)
+                    CompactGhostButton(text = "테마", modifier = Modifier.weight(1f), height = secondaryButtonHeight, fontSize = secondaryButtonFont, onClick = onGoThemeSettings)
+                    CompactGhostButton(text = "정산하기", modifier = Modifier.weight(1f), height = secondaryButtonHeight, fontSize = secondaryButtonFont, onClick = onGoHistory)
+                }
             }
         }
     }
@@ -1331,22 +1443,25 @@ private fun CompactGhostButton(
     text: String,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    height: Dp = 62.dp,
+    fontSize: androidx.compose.ui.unit.TextUnit = 17.sp,
     onClick: () -> Unit
 ) {
     Button(
-        modifier = modifier.height(58.dp),
+        modifier = modifier.height(height),
         onClick = onClick,
         enabled = enabled,
-        shape = G2RoundedCornerShape(999.dp),
+        shape = G2RoundedCornerShape(22.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFDDE6F2).copy(alpha = 0.78f)),
         elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp, pressedElevation = 0.dp),
         colors = ButtonDefaults.buttonColors(
-            containerColor = Panel,
+            containerColor = ButtonGray,
             contentColor = DarkText,
-            disabledContainerColor = Color(0xFFD8DEE8),
+            disabledContainerColor = ButtonGray.copy(alpha = 0.54f),
             disabledContentColor = Color(0xFFB8B8B8)
         )
     ) {
-        Text(text = text, fontSize = 16.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+        Text(text = text, fontSize = fontSize, fontWeight = FontWeight.Black, textAlign = TextAlign.Center)
     }
 }
 
@@ -1420,103 +1535,166 @@ private fun PassengerWidgetPage(
 
     Column(
         modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(HomePagerSectionSpacing)
     ) {
         Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = G2RoundedCornerShape(28.dp),
-            colors = CardDefaults.cardColors(containerColor = Color.White),
-            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-        ) {
-            Column(
-                modifier = Modifier.padding(horizontal = 22.dp, vertical = 20.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                Text(text = "최근 손님", color = DarkText, fontSize = 32.sp, fontWeight = FontWeight.Black)
-                Text(text = "최근 30일 안의 영수증을 빠르게 열어볼 수 있어요", color = GrayText, fontSize = 18.sp, fontWeight = FontWeight.Medium)
-            }
-        }
-
-        MonthlyRevenueSummaryCard(
-            revenue = monthlyRevenue,
-            rideCount = monthlyRecords.size,
-            distanceKm = monthlyDistance
-        )
-
-        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .weight(1f)
-                .nestedScroll(bounceConnection)
-                .clipToBounds()
+                .weight(1f),
+            shape = G2RoundedCornerShape(34.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+            border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.62f)),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
         ) {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer { translationY = bounceOffset.value },
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                if (recentPassengerGroups.isEmpty()) {
-                    item {
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = G2RoundedCornerShape(26.dp),
-                            colors = CardDefaults.cardColors(containerColor = Color.White),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE8ECF4)),
-                            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-                        ) {
-                            Text(
-                                text = "최근 카풀했던 사람의 이름이 표시됩니다",
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 28.dp, vertical = 80.dp),
-                                color = GrayText,
-                                fontSize = 22.sp,
-                                fontWeight = FontWeight.Bold,
-                                textAlign = TextAlign.Center
-                            )
-                        }
-                    }
-                } else {
-                    items(
-                        items = recentPassengerGroups,
-                        key = { it.first }
-                    ) { (name, passengerRecords) ->
-                        val latest = passengerRecords.first()
-                        val totalFare = passengerRecords.sumOf { it.totalFare }
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { onPassengerClick(name) },
-                            shape = G2RoundedCornerShape(26.dp),
-                            colors = CardDefaults.cardColors(containerColor = Color.White),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE8ECF4)),
-                            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 22.dp, vertical = 20.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(
-                                    modifier = Modifier.weight(1f),
-                                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    Text(text = "$name 손님", color = DarkText, fontSize = 24.sp, fontWeight = FontWeight.Black)
-                                    Text(
-                                        text = "총 ${passengerRecords.size}회 이용 · 최근 ${latest.date} ${latest.endTime}",
-                                        color = GrayText,
-                                        fontSize = 16.sp,
-                                        fontWeight = FontWeight.Medium
-                                    )
-                                }
-                                Text(
-                                    text = "${totalFare.formatWon()}원",
-                                    color = PrimaryBlue,
-                                    fontSize = 24.sp,
-                                    fontWeight = FontWeight.Black
+            Box(modifier = Modifier.fillMaxSize()) {
+                Image(
+                    painter = painterResource(id = R.drawable.inda),
+                    contentDescription = null,
+                    modifier = Modifier.matchParentSize(),
+                    contentScale = ContentScale.Crop
+                )
+
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .fillMaxWidth()
+                        .height(220.dp)
+                        .clipToBounds()
+                ) {
+                    Image(
+                        painter = painterResource(id = R.drawable.inda),
+                        contentDescription = null,
+                        modifier = Modifier
+                            .matchParentSize()
+                            .blur(20.dp)
+                            .graphicsLayer { alpha = 0.72f },
+                        contentScale = ContentScale.Crop
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .background(
+                            Brush.verticalGradient(
+                                colorStops = arrayOf(
+                                    0.00f to Color.White.copy(alpha = 0.72f),
+                                    0.24f to Color.White.copy(alpha = 0.42f),
+                                    0.56f to Color.White.copy(alpha = 0.12f),
+                                    1.00f to Color.White.copy(alpha = 0.04f)
                                 )
+                            )
+                        )
+                )
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(G2RoundedCornerShape(26.dp))
+                            .background(Color.White.copy(alpha = 0.74f))
+                            .border(1.dp, Color.White.copy(alpha = 0.62f), G2RoundedCornerShape(26.dp))
+                            .padding(horizontal = 22.dp, vertical = 20.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(text = "최근 손님", color = DarkText, fontSize = 32.sp, fontWeight = FontWeight.Black)
+                        Text(
+                            text = "최근 30일간의 이용 내역과 영수증을 빠르게 열어볼 수 있어요",
+                            color = GrayText,
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Medium,
+                            lineHeight = 24.sp
+                        )
+                    }
+
+                    MonthlyRevenueSummaryCard(
+                        revenue = monthlyRevenue,
+                        rideCount = monthlyRecords.size,
+                        distanceKm = monthlyDistance
+                    )
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                            .nestedScroll(bounceConnection)
+                            .clipToBounds()
+                    ) {
+                        LazyColumn(
+                            state = listState,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .graphicsLayer { translationY = bounceOffset.value },
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            if (recentPassengerGroups.isEmpty()) {
+                                item {
+                                    Card(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        shape = G2RoundedCornerShape(26.dp),
+                                        colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.94f)),
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.72f)),
+                                        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+                                    ) {
+                                        Text(
+                                            text = "최근 카풀했던 사람의 이름이 표시됩니다",
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 28.dp, vertical = 80.dp),
+                                            color = GrayText,
+                                            fontSize = 22.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            textAlign = TextAlign.Center
+                                        )
+                                    }
+                                }
+                            } else {
+                                items(
+                                    items = recentPassengerGroups,
+                                    key = { it.first }
+                                ) { (name, passengerRecords) ->
+                                    val latest = passengerRecords.first()
+                                    val totalFare = passengerRecords.sumOf { it.totalFare }
+                                    Card(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable { onPassengerClick(name) },
+                                        shape = G2RoundedCornerShape(26.dp),
+                                        colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.94f)),
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.72f)),
+                                        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 22.dp, vertical = 20.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column(
+                                                modifier = Modifier.weight(1f),
+                                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                Text(text = "$name 손님", color = DarkText, fontSize = 24.sp, fontWeight = FontWeight.Black)
+                                                Text(
+                                                    text = "총 ${passengerRecords.size}회 이용 · 최근 ${latest.date} ${latest.endTime}",
+                                                    color = GrayText,
+                                                    fontSize = 16.sp,
+                                                    fontWeight = FontWeight.Medium
+                                                )
+                                            }
+                                            Text(
+                                                text = "${totalFare.formatWon()}원",
+                                                color = PrimaryBlue,
+                                                fontSize = 24.sp,
+                                                fontWeight = FontWeight.Black
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -1538,11 +1716,7 @@ private fun PassengerWidgetPage(
 
         ChallengeEntryButton(onClick = onGoChallenges)
 
-        HomePagerIndicator(
-            currentPage = currentPage,
-            pageCount = 3,
-            modifier = Modifier.fillMaxWidth()
-        )
+        HomePagerIndicatorSlot(currentPage = currentPage)
     }
 
     deleteTargetName?.let { name ->
@@ -1635,7 +1809,6 @@ private fun ChallengesScreen(
     val challenges = buildChallengeItems(records)
     val completedCount = challenges.count { it.progress >= 1f }
 
-    TopBar()
     PageHeader(
         title = "도전 과제",
         subtitle = "카풀 기록에 따라 자동으로 완수율이 올라가요."
@@ -1681,11 +1854,11 @@ private fun ChallengesScreen(
         }
     }
 
+    OrangeButton(text = "돌아가기", modifier = Modifier.fillMaxWidth(), onClick = onGoHome)
+
     challenges.forEach { challenge ->
         ChallengeCard(challenge = challenge)
     }
-
-    OrangeButton(text = "돌아가기", modifier = Modifier.fillMaxWidth(), onClick = onGoHome)
 }
 
 @Composable
@@ -1759,7 +1932,6 @@ private fun ChallengeBadgeBoardScreen(
     val challenges = buildChallengeItems(records)
     val completedChallenges = challenges.filter { it.progress >= 1f }
 
-    TopBar()
     PageHeader(
         title = "카풀 배지 보드",
         subtitle = "완료한 도전 과제만 모아봤어요."
@@ -2244,7 +2416,7 @@ private fun HomeOverviewPage(
         ) {
             Text(text = "빠른 이동", color = DarkText, fontSize = 24.sp, fontWeight = FontWeight.Black)
             Text(
-                text = "${selectedRegion.displayName} · ${farePolicy.baseDistanceKm}km 기본 · ${farePolicy.stepDistanceMeters.toInt()}m당 ${farePolicy.stepFare}원",
+                text = farePolicy.summaryText(),
                 color = GrayText,
                 fontSize = 17.sp,
                 fontWeight = FontWeight.Medium
@@ -2253,18 +2425,14 @@ private fun HomeOverviewPage(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                GhostButton(text = "요금제", modifier = Modifier.weight(1f), onClick = onGoFareSettings)
+                GhostButton(text = "요금제 설정", modifier = Modifier.weight(1f), onClick = onGoFareSettings)
                 GhostButton(text = "테마", modifier = Modifier.weight(1f), onClick = onGoThemeSettings)
                 GhostButton(text = "내역", modifier = Modifier.weight(1f), onClick = onGoHistory)
             }
         }
     }
 
-    HomePagerIndicator(
-        currentPage = currentPage,
-        pageCount = 3,
-        modifier = Modifier.fillMaxWidth()
-    )
+    HomePagerIndicatorSlot(currentPage = currentPage)
 }
 
 @Composable
@@ -2281,173 +2449,223 @@ private fun HomeQuickSettingsPage(
     onGoDonation: () -> Unit
 ) {
     var autoSurchargeEnabled by remember { mutableStateOf(false) }
-    var showResetDialog by remember { mutableStateOf(false) }
-    val context = LocalContext.current
 
-    BouncyScrollableColumn(
+    Column(
         modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(HomePagerSectionSpacing)
     ) {
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(260.dp),
-            shape = G2RoundedCornerShape(28.dp),
-            colors = CardDefaults.cardColors(containerColor = GlassWhite),
-            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+        BouncyScrollableColumn(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Column(
+            Card(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(26.dp),
-                verticalArrangement = Arrangement.SpaceBetween
+                    .fillMaxWidth()
+                    .height(260.dp),
+                shape = G2RoundedCornerShape(28.dp),
+                colors = CardDefaults.cardColors(containerColor = GlassWhite),
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
             ) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(text = "설정 요약", color = DarkText, fontSize = 34.sp, fontWeight = FontWeight.Black)
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(26.dp),
+                    verticalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(text = "설정 요약", color = DarkText, fontSize = 34.sp, fontWeight = FontWeight.Black)
+                        Text(
+                            text = if (isRunning) "주행 중에는 요금제를 바꾸지 않아요" else "카풀미터기 설정을 빠르게 확인해요",
+                            color = GrayText,
+                            fontSize = 19.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        DashboardTile(
+                            title = "지역",
+                            value = selectedRegion.displayName,
+                            modifier = Modifier.weight(1f)
+                        )
+                        DashboardTile(
+                            title = "할증",
+                            value = selectedSurcharge.buttonText,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = G2RoundedCornerShape(28.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White),
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Text(text = "현재 요금 규칙", color = DarkText, fontSize = 24.sp, fontWeight = FontWeight.Black)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        DashboardTile(
+                            title = "기본 요금",
+                            value = "${farePolicy.baseFare.formatWon()}원",
+                            modifier = Modifier.weight(1f)
+                        )
+                        DashboardTile(
+                            title = "거리 요금",
+                            value = "${farePolicy.stepDistanceMeters.toInt()}m",
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
                     Text(
-                        text = if (isRunning) "주행 중에는 요금제를 바꾸지 않아요" else "카풀미터기 설정을 빠르게 확인해요",
+                        text = farePolicy.distanceRuleText(),
                         color = GrayText,
-                        fontSize = 19.sp,
+                        fontSize = 17.sp,
                         fontWeight = FontWeight.Medium
                     )
                 }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    DashboardTile(
-                        title = "지역",
-                        value = selectedRegion.displayName,
-                        modifier = Modifier.weight(1f)
-                    )
-                    DashboardTile(
-                        title = "할증",
-                        value = selectedSurcharge.buttonText,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
             }
-        }
 
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = G2RoundedCornerShape(28.dp),
-            colors = CardDefaults.cardColors(containerColor = Color.White),
-            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-        ) {
+            DeveloperSupportBanner(
+                onClick = onGoDonation
+            )
+
+            SmartSettingsCard(
+                autoSurchargeEnabled = autoSurchargeEnabled,
+                onAutoSurchargeChange = { autoSurchargeEnabled = it }
+            )
+
             Column(
-                modifier = Modifier.padding(20.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text(text = "현재 요금 규칙", color = DarkText, fontSize = 24.sp, fontWeight = FontWeight.Black)
-                Row(
+                GhostButton(
+                    text = "정보",
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    DashboardTile(
-                        title = "기본 요금",
-                        value = "${farePolicy.baseFare.formatWon()}원",
-                        modifier = Modifier.weight(1f)
-                    )
-                    DashboardTile(
-                        title = "거리 요금",
-                        value = "${farePolicy.stepDistanceMeters.toInt()}m",
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-                Text(
-                    text = "${farePolicy.baseDistanceKm}km 이후 ${farePolicy.stepDistanceMeters.toInt()}m마다 ${farePolicy.stepFare}원씩 계산돼요",
-                    color = GrayText,
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.Medium
+                    height = 82.dp,
+                    fontSize = 20.sp,
+                    onClick = onGoInfo
                 )
             }
         }
 
-        DeveloperSupportBanner(
-            onClick = onGoDonation
-        )
-
-        SmartSettingsCard(
-            autoSurchargeEnabled = autoSurchargeEnabled,
-            onAutoSurchargeChange = { autoSurchargeEnabled = it }
-        )
-
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            GhostButton(text = "정보", modifier = Modifier.fillMaxWidth(), onClick = onGoInfo)
-            GhostButton(text = "전체 내역 초기화", modifier = Modifier.fillMaxWidth(), onClick = { showResetDialog = true })
-        }
-
-        HomePagerIndicator(
-            currentPage = currentPage,
-            pageCount = 3,
-            modifier = Modifier.fillMaxWidth()
-        )
-    }
-
-    if (showResetDialog) {
-        ResetHistoryDialog(
-            onDismiss = { showResetDialog = false },
-            onDelete = {
-                showResetDialog = false
-                Toast.makeText(context, "전체 내역 초기화 기능은 준비 중입니다", Toast.LENGTH_SHORT).show()
-            }
-        )
+        HomePagerIndicatorSlot(currentPage = currentPage)
     }
 }
 
 @Composable
 private fun ResetHistoryDialog(
+    visible: Boolean,
     onDismiss: () -> Unit,
     onDelete: () -> Unit
 ) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        shape = G2RoundedCornerShape(34.dp),
-        containerColor = Color.White,
-        title = {
-            Text(
-                text = "!",
-                modifier = Modifier.fillMaxWidth(),
-                color = Color.Red,
-                fontSize = 36.sp,
-                fontWeight = FontWeight.Black,
-                textAlign = TextAlign.Center
-            )
-        },
-        text = {
-            Text(
-                text = "모든 내역을 삭제하시겠습니까?",
-                modifier = Modifier.fillMaxWidth(),
-                color = DarkText,
-                fontSize = 24.sp,
-                fontWeight = FontWeight.Black,
-                textAlign = TextAlign.Center,
-                lineHeight = 30.sp
-            )
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text(text = "취소", color = GrayText, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = onDelete,
-                shape = G2RoundedCornerShape(999.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Color.Red,
-                    contentColor = Color.White
-                ),
-                elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp, pressedElevation = 0.dp)
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing)),
+        exit = fadeOut(animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing))
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.46f))
+                .clickable(onClick = onDismiss),
+            contentAlignment = Alignment.Center
+        ) {
+            AnimatedVisibility(
+                visible = visible,
+                enter = fadeIn(animationSpec = tween(durationMillis = 240, easing = FastOutSlowInEasing)) +
+                    scaleIn(
+                        initialScale = 0.965f,
+                        animationSpec = tween(durationMillis = 340, easing = FastOutSlowInEasing)
+                    ),
+                exit = fadeOut(animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing)) +
+                    scaleOut(
+                        targetScale = 0.98f,
+                        animationSpec = tween(durationMillis = 190, easing = FastOutSlowInEasing)
+                    )
             ) {
-                Text(text = "삭제", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Black)
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 34.dp)
+                        .clickable(onClick = {}),
+                    shape = G2RoundedCornerShape(34.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.72f)),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 14.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 30.dp, vertical = 28.dp),
+                        verticalArrangement = Arrangement.spacedBy(18.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = "!",
+                                color = Color(0xFFFF3B30),
+                                fontSize = 38.sp,
+                                fontWeight = FontWeight.Black,
+                                textAlign = TextAlign.Center
+                            )
+                            Text(
+                                text = "전체 내역 초기화",
+                                color = DarkText,
+                                fontSize = 30.sp,
+                                fontWeight = FontWeight.Black,
+                                textAlign = TextAlign.Center
+                            )
+                            Text(
+                                text = "모든 주행 내역과 정산 기록을 삭제하시겠습니까?",
+                                color = GrayText,
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Medium,
+                                textAlign = TextAlign.Center,
+                                lineHeight = 24.sp
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            GhostButton(
+                                text = "취소",
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(58.dp),
+                                onClick = onDismiss
+                            )
+                            Button(
+                                onClick = onDelete,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(58.dp),
+                                shape = G2RoundedCornerShape(22.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFFFF3B30),
+                                    contentColor = Color.White
+                                ),
+                                elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp, pressedElevation = 0.dp)
+                            ) {
+                                Text(text = "삭제", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Black)
+                            }
+                        }
+                    }
+                }
             }
         }
-    )
+    }
 }
 
 @Composable
@@ -2505,8 +2723,12 @@ private fun StandaloneDetailHeader(
 @Composable
 private fun AppInfoScreen(
     selectedTheme: MeshTheme,
-    onGoBack: () -> Unit
+    onGoBack: () -> Unit,
+    onResetHistory: () -> Unit
 ) {
+    var showResetDialog by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(24.dp)
@@ -2617,10 +2839,26 @@ private fun AppInfoScreen(
                         .height(1.dp)
                         .background(Color(0xFFE2E5EA))
                 )
-                AppInfoRow(title = "개발자 문의", value = "appleslie0@gmail.com")
+                AppInfoRow(title = "개발자 건의사항 및 문의", value = "appleslie0@gmail.com")
             }
         }
+
+        DangerButton(
+            text = "전체 내역 초기화",
+            modifier = Modifier.fillMaxWidth(),
+            onClick = { showResetDialog = true }
+        )
     }
+
+    ResetHistoryDialog(
+        visible = showResetDialog,
+        onDismiss = { showResetDialog = false },
+        onDelete = {
+            showResetDialog = false
+            onResetHistory()
+            Toast.makeText(context, "전체 내역을 초기화했어요", Toast.LENGTH_SHORT).show()
+        }
+    )
 }
 
 @Composable
@@ -2668,11 +2906,12 @@ private fun DonationScreen(onGoBack: () -> Unit) {
             DonationItem("⛽ 가득이요! VIP 주유권", "50,000원", R.drawable.gas)
         )
     }
-    val pagerState = rememberPagerState(pageCount = { donationItems.size })
+    val donationPages = remember(donationItems) { donationItems.chunked(4) }
+    val pagerState = rememberPagerState(pageCount = { donationPages.size })
 
     Column(
         modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(22.dp)
+        verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
         StandaloneDetailHeader(
             title = "개발자 후원",
@@ -2685,24 +2924,25 @@ private fun DonationScreen(onGoBack: () -> Unit) {
             modifier = Modifier
                 .fillMaxWidth()
                 .height(760.dp),
-            pageSpacing = 18.dp
+            contentPadding = PaddingValues(end = 54.dp),
+            pageSpacing = 16.dp
         ) { page ->
-            DonationCard(item = donationItems[page])
+            DonationPageCard(items = donationPages[page])
         }
 
         HomePagerIndicator(
             currentPage = pagerState.currentPage,
-            pageCount = donationItems.size,
+            pageCount = donationPages.size,
             modifier = Modifier.fillMaxWidth()
         )
     }
 }
 
 @Composable
-private fun DonationCard(item: DonationItem) {
+private fun DonationPageCard(items: List<DonationItem>) {
     Card(
         modifier = Modifier.fillMaxSize(),
-        shape = G2RoundedCornerShape(42.dp),
+        shape = G2RoundedCornerShape(36.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.94f)),
         border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.78f)),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
@@ -2710,21 +2950,68 @@ private fun DonationCard(item: DonationItem) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(30.dp),
+                .padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp)
+        ) {
+            DonationGridRow(items = items.take(2), modifier = Modifier.weight(1f))
+            DonationGridRow(items = items.drop(2).take(2), modifier = Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun DonationGridRow(
+    items: List<DonationItem>,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(18.dp)
+    ) {
+        items.forEach { item ->
+            DonationItemCard(
+                item = item,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxSize()
+            )
+        }
+        repeat(2 - items.size) {
+            Spacer(modifier = Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun DonationItemCard(
+    item: DonationItem,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier,
+        shape = G2RoundedCornerShape(30.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.92f)),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Line.copy(alpha = 0.72f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(14.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.SpaceBetween
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(420.dp)
-                    .clip(G2RoundedCornerShape(34.dp))
+                    .weight(1f)
+                    .clip(G2RoundedCornerShape(26.dp))
                     .background(
                         Brush.linearGradient(
                             colors = listOf(
-                                Color(0xFFFFF2E8),
-                                Color(0xFFFFD7EA),
-                                Color(0xFFE5F5FF),
+                                Color(0xFFFFF4EC),
+                                Color(0xFFFFDDEB),
+                                Color(0xFFE9F7FF),
                                 Color(0xFFEFFFFB)
                             )
                         )
@@ -2734,53 +3021,54 @@ private fun DonationCard(item: DonationItem) {
                 Canvas(modifier = Modifier.fillMaxSize()) {
                     drawCircle(
                         color = Color.White.copy(alpha = 0.48f),
-                        radius = size.minDimension * 0.36f,
-                        center = Offset(size.width * 0.24f, size.height * 0.18f)
+                        radius = size.minDimension * 0.44f,
+                        center = Offset(size.width * 0.25f, size.height * 0.12f)
                     )
                     drawCircle(
-                        color = Color(0xFFFF9F65).copy(alpha = 0.26f),
-                        radius = size.minDimension * 0.34f,
+                        color = Color(0xFFFF9F65).copy(alpha = 0.22f),
+                        radius = size.minDimension * 0.40f,
                         center = Offset(size.width * 0.86f, size.height * 0.18f)
                     )
                     drawCircle(
-                        color = Color(0xFF64D8FF).copy(alpha = 0.22f),
-                        radius = size.minDimension * 0.40f,
-                        center = Offset(size.width * 0.45f, size.height * 0.92f)
+                        color = Color(0xFF64D8FF).copy(alpha = 0.25f),
+                        radius = size.minDimension * 0.42f,
+                        center = Offset(size.width * 0.48f, size.height * 0.92f)
                     )
                 }
                 Image(
                     painter = painterResource(id = item.imageRes),
                     contentDescription = null,
-                    modifier = Modifier.size(250.dp),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(18.dp),
                     contentScale = ContentScale.Fit
                 )
             }
 
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Text(
-                    text = item.name,
-                    color = DarkText,
-                    fontSize = 30.sp,
-                    fontWeight = FontWeight.Black,
-                    textAlign = TextAlign.Center,
-                    lineHeight = 36.sp
-                )
-                Text(
-                    text = item.price,
-                    color = PrimaryBlue,
-                    fontSize = 42.sp,
-                    fontWeight = FontWeight.Black,
-                    textAlign = TextAlign.Center
-                )
-            }
+            Text(
+                text = item.name,
+                color = DarkText,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Black,
+                textAlign = TextAlign.Center,
+                lineHeight = 24.sp,
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Text(
+                text = item.price,
+                color = PrimaryBlue,
+                fontSize = 26.sp,
+                fontWeight = FontWeight.Black,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
+            )
 
             OrangeButton(
                 text = "후원하기",
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(50.dp),
                 onClick = {}
             )
         }
@@ -2937,6 +3225,27 @@ private fun SmartSettingsCard(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun HomePagerIndicatorSlot(
+    currentPage: Int,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(HomePagerIndicatorSlotHeight),
+        contentAlignment = Alignment.Center
+    ) {
+        HomePagerIndicator(
+            currentPage = currentPage,
+            pageCount = 3,
+            modifier = Modifier
+                .fillMaxWidth()
+                .offset(y = HomePagerIndicatorYOffset)
+        )
     }
 }
 
@@ -3108,7 +3417,86 @@ private fun MeterCard(
         colors = CardDefaults.cardColors(containerColor = Color.Transparent),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
-        Box(modifier = Modifier.fillMaxSize()) {
+        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+            val expandedCard = maxWidth >= 700.dp
+            val wideCard = maxWidth >= 560.dp
+            val cardPadding = when {
+                expandedCard -> 29.dp
+                wideCard -> 26.dp
+                else -> 24.dp
+            }
+            val nameFont = when {
+                expandedCard -> 37.sp
+                wideCard -> 34.sp
+                else -> 31.sp
+            }
+            val dateFont = when {
+                expandedCard -> 22.sp
+                wideCard -> 20.sp
+                else -> 18.sp
+            }
+            val centerLabelFont = when {
+                expandedCard -> 25.sp
+                wideCard -> 22.sp
+                else -> 20.sp
+            }
+            val fareFont = when {
+                expandedCard -> 112.sp
+                wideCard -> 102.sp
+                else -> 88.sp
+            }
+            val fareLineHeight = when {
+                expandedCard -> 114.sp
+                wideCard -> 104.sp
+                else -> 90.sp
+            }
+            val policyFont = when {
+                expandedCard -> 20.sp
+                wideCard -> 18.sp
+                else -> 16.sp
+            }
+            val chipFont = when {
+                expandedCard -> 22.sp
+                wideCard -> 15.sp
+                else -> 14.sp
+            }
+            val chipHorizontalPadding = when {
+                expandedCard -> 24.dp
+                wideCard -> 15.dp
+                else -> 13.dp
+            }
+            val chipVerticalPadding = when {
+                expandedCard -> 17.dp
+                wideCard -> 10.dp
+                else -> 9.dp
+            }
+            val chipGap = if (expandedCard) 14.dp else 9.dp
+            val bottomPanelPaddingH = when {
+                expandedCard -> 24.dp
+                wideCard -> 22.dp
+                else -> 19.dp
+            }
+            val bottomPanelPaddingV = when {
+                expandedCard -> 19.dp
+                wideCard -> 17.dp
+                else -> 15.dp
+            }
+            val metricTitleFont = when {
+                expandedCard -> 17.sp
+                wideCard -> 16.sp
+                else -> 15.sp
+            }
+            val metricValueFont = when {
+                expandedCard -> 27.sp
+                wideCard -> 25.sp
+                else -> 22.sp
+            }
+            val metricDividerHeight = when {
+                expandedCard -> 54.dp
+                wideCard -> 50.dp
+                else -> 44.dp
+            }
+
             Image(
                 painter = painterResource(id = selectedTheme.drawableRes),
                 contentDescription = null,
@@ -3131,7 +3519,7 @@ private fun MeterCard(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(24.dp),
+                    .padding(cardPadding),
                 verticalArrangement = Arrangement.SpaceBetween
             ) {
                 Row(
@@ -3143,48 +3531,62 @@ private fun MeterCard(
                         modifier = Modifier.weight(1f),
                         verticalArrangement = Arrangement.spacedBy(5.dp)
                     ) {
-                        Text(text = "$passengerName 손님", color = Color.White, fontSize = 31.sp, fontWeight = FontWeight.Black)
-                        Text(text = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yy/MM/dd HH:mm")), color = Color.White.copy(alpha = 0.76f), fontSize = 19.sp, fontWeight = FontWeight.Medium)
+                        Text(text = "$passengerName 손님", color = Color.White, fontSize = nameFont, fontWeight = FontWeight.Black)
+                        Text(text = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yy/MM/dd HH:mm")), color = Color.White.copy(alpha = 0.76f), fontSize = dateFont, fontWeight = FontWeight.Medium)
                     }
-                    GlassTextChip(
-                        text = "수정",
-                        fontSize = 15.sp,
-                        onClick = onEditPassenger
-                    )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(chipGap),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        MeterStatusChip(
+                            text = if (isRunning) "실제 주행" else "대기 중",
+                            active = isRunning,
+                            fontSize = chipFont,
+                            horizontalPadding = chipHorizontalPadding,
+                            verticalPadding = chipVerticalPadding
+                        )
+                        MeterStatusChip(
+                            text = farePolicy.shortLabel,
+                            active = true,
+                            fontSize = chipFont,
+                            horizontalPadding = chipHorizontalPadding,
+                            verticalPadding = chipVerticalPadding
+                        )
+                        GlassTextChip(
+                            text = "이름 변경",
+                            fontSize = chipFont,
+                            horizontalPadding = chipHorizontalPadding,
+                            verticalPadding = chipVerticalPadding,
+                            onClick = onEditPassenger
+                        )
+                    }
                 }
 
                 Column(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        StatusChip(text = if (isRunning) "실제 주행" else "대기 중", active = isRunning)
-                        StatusChip(text = farePolicy.shortLabel, active = true)
-                    }
                     Text(
                         text = "현재 요금",
                         color = Color.White.copy(alpha = 0.78f),
-                        fontSize = 19.sp,
+                        fontSize = centerLabelFont,
                         fontWeight = FontWeight.Bold
                     )
                     Text(
                         text = "${fare.formatWon()}원",
                         modifier = Modifier.fillMaxWidth(),
                         color = Color.White,
-                        fontSize = 82.sp,
+                        fontSize = fareFont,
                         fontWeight = FontWeight.Black,
                         textAlign = TextAlign.Center,
-                        lineHeight = 86.sp
+                        lineHeight = fareLineHeight
                     )
                     Text(
-                        text = "${farePolicy.label} · 기본 ${farePolicy.baseDistanceKm}km · ${farePolicy.stepDistanceMeters.toInt()}m당 ${farePolicy.stepFare}원",
+                        text = farePolicy.summaryText(),
                         modifier = Modifier.fillMaxWidth(),
                         color = Color.White.copy(alpha = 0.78f),
-                        fontSize = 16.sp,
+                        fontSize = policyFont,
                         fontWeight = FontWeight.Bold,
                         textAlign = TextAlign.Center
                     )
@@ -3194,24 +3596,28 @@ private fun MeterCard(
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(Color.White.copy(alpha = 0.92f), G2RoundedCornerShape(22.dp))
-                        .padding(horizontal = 20.dp, vertical = 16.dp),
+                        .padding(horizontal = bottomPanelPaddingH, vertical = bottomPanelPaddingV),
                     horizontalArrangement = Arrangement.spacedBy(14.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     MeterMetricItem(
                         title = "주행시간",
                         value = elapsedSeconds.formatDuration(),
+                        titleFontSize = metricTitleFont,
+                        valueFontSize = metricValueFont,
                         modifier = Modifier.weight(1f)
                     )
                     Box(
                         modifier = Modifier
                             .width(1.dp)
-                            .height(46.dp)
+                            .height(metricDividerHeight)
                             .background(Line)
                     )
                     MeterMetricItem(
                         title = "주행거리",
                         value = "%.3fkm".format(tripDistanceKm),
+                        titleFontSize = metricTitleFont,
+                        valueFontSize = metricValueFont,
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -3221,9 +3627,37 @@ private fun MeterCard(
 }
 
 @Composable
+private fun MeterStatusChip(
+    text: String,
+    active: Boolean,
+    fontSize: androidx.compose.ui.unit.TextUnit = 15.sp,
+    horizontalPadding: Dp = 15.dp,
+    verticalPadding: Dp = 10.dp
+) {
+    val shape = G2RoundedCornerShape(22.dp)
+    Text(
+        text = text,
+        modifier = Modifier
+            .heightIn(min = verticalPadding * 2f + 24.dp)
+            .background(
+                if (active) PrimaryBlue.copy(alpha = 0.92f) else Color.White.copy(alpha = 0.22f),
+                shape
+            )
+            .border(1.dp, Color.White.copy(alpha = 0.24f), shape)
+            .padding(horizontal = horizontalPadding, vertical = verticalPadding),
+        color = Color.White,
+        fontSize = fontSize,
+        fontWeight = FontWeight.Black,
+        maxLines = 1
+    )
+}
+
+@Composable
 private fun MeterMetricItem(
     title: String,
     value: String,
+    titleFontSize: androidx.compose.ui.unit.TextUnit = 15.sp,
+    valueFontSize: androidx.compose.ui.unit.TextUnit = 22.sp,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -3231,8 +3665,8 @@ private fun MeterMetricItem(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(5.dp)
     ) {
-        Text(text = title, color = GrayText, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-        Text(text = value, color = DarkText, fontSize = 22.sp, fontWeight = FontWeight.Black)
+        Text(text = title, color = GrayText, fontSize = titleFontSize, fontWeight = FontWeight.Bold)
+        Text(text = value, color = DarkText, fontSize = valueFontSize, fontWeight = FontWeight.Black)
     }
 }
 
@@ -3317,21 +3751,30 @@ private fun SurchargeSelector(
         border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.52f)),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
+        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+            val expandedPanel = maxWidth >= 700.dp
+            val titleFont = if (expandedPanel) 23.sp else 21.sp
+            val hintFont = if (expandedPanel) 17.sp else 16.sp
+            val buttonHeight = if (expandedPanel) 78.dp else 72.dp
+            val buttonFont = if (expandedPanel) 21.sp else 19.sp
+            val contentPadding = if (expandedPanel) 20.dp else 18.dp
+            val rowGap = if (expandedPanel) 10.dp else 8.dp
+
         Column(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            modifier = Modifier.padding(horizontal = contentPadding, vertical = 15.dp),
+            verticalArrangement = Arrangement.spacedBy(13.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(text = "할증 요금제", color = DarkText, fontSize = 19.sp, fontWeight = FontWeight.Black)
+                Text(text = "할증 요금제", color = DarkText, fontSize = titleFont, fontWeight = FontWeight.Black)
                 if (!enabled) {
                     Text(
                         text = "주행 중 변경 불가",
                         color = GrayText,
-                        fontSize = 14.sp,
+                        fontSize = hintFont,
                         fontWeight = FontWeight.Medium
                     )
                 }
@@ -3339,12 +3782,12 @@ private fun SurchargeSelector(
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(rowGap)
             ) {
                 SurchargeMode.entries.forEach { mode ->
                     val selected = mode == selectedSurcharge
                     val buttonColor by animateColorAsState(
-                        targetValue = if (selected) PrimaryBlue else Panel,
+                        targetValue = if (selected) PrimaryBlue else ButtonGray,
                         animationSpec = tween(durationMillis = 300, easing = FastOutSlowInEasing),
                         label = "surchargeButtonColor"
                     )
@@ -3354,7 +3797,7 @@ private fun SurchargeSelector(
                         label = "surchargeTextColor"
                     )
                     val disabledButtonColor by animateColorAsState(
-                        targetValue = if (selected) SoftBlue else Panel,
+                        targetValue = if (selected) SoftBlue else ButtonGray,
                         animationSpec = tween(durationMillis = 300, easing = FastOutSlowInEasing),
                         label = "surchargeDisabledButtonColor"
                     )
@@ -3374,14 +3817,14 @@ private fun SurchargeSelector(
                     Button(
                         modifier = Modifier
                             .weight(1f)
-                            .height(62.dp)
+                            .height(buttonHeight)
                             .graphicsLayer {
                                 scaleX = scale
                                 scaleY = scale
                             },
                         enabled = enabled,
                         onClick = { onSelectSurcharge(mode) },
-                        shape = G2RoundedCornerShape(999.dp),
+                        shape = G2RoundedCornerShape(22.dp),
                         elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp, pressedElevation = 0.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = buttonColor,
@@ -3390,7 +3833,214 @@ private fun SurchargeSelector(
                             disabledContentColor = disabledTextColor
                         )
                     ) {
-                        Text(text = mode.buttonText, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                        Text(text = mode.buttonText, fontSize = buttonFont, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+        }
+    }
+}
+
+@Composable
+private fun FareModeSelectScreen(
+    onGoRegionalFare: () -> Unit,
+    onGoCustomFare: () -> Unit,
+    onGoBack: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(start = 18.dp, end = 18.dp, top = 44.dp, bottom = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        StandaloneDetailHeader(
+            title = "요금제 설정",
+            subtitle = "요금제를 선택하는 방식을 고르세요.",
+            onGoBack = onGoBack
+        )
+
+        FareModeLargeButton(
+            title = "지역별 요금제 선택",
+            subtitle = "서울, 경기, 지방 택시 요금 기준으로 자동 계산해요.",
+            badge = "기존 방식",
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            onClick = onGoRegionalFare
+        )
+
+        FareModeLargeButton(
+            title = "커스텀 요금제 선택",
+            subtitle = "기본요금과 100m당 요금을 직접 정해서 계산해요.",
+            badge = "직접 설정",
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            onClick = onGoCustomFare
+        )
+    }
+}
+
+@Composable
+private fun FareModeLargeButton(
+    title: String,
+    subtitle: String,
+    badge: String,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Card(
+        modifier = modifier.clickable(onClick = onClick),
+        shape = G2RoundedCornerShape(34.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.96f)),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.52f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(30.dp),
+                verticalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = badge,
+                    modifier = Modifier
+                        .background(SoftBlue, G2RoundedCornerShape(999.dp))
+                        .padding(horizontal = 18.dp, vertical = 10.dp),
+                    color = PrimaryBlue,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Black
+                )
+
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(text = title, color = DarkText, fontSize = 36.sp, fontWeight = FontWeight.Black)
+                    Text(text = subtitle, color = GrayText, fontSize = 20.sp, fontWeight = FontWeight.Medium, lineHeight = 27.sp)
+                }
+
+                Text(
+                    text = "선택하기",
+                    modifier = Modifier.fillMaxWidth(),
+                    color = PrimaryBlue,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Black,
+                    textAlign = TextAlign.End
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CustomFareSettingsScreen(
+    baseFare: Int,
+    stepFare: Int,
+    useCustomFare: Boolean,
+    onSelectCustomFare: (Int, Int) -> Unit,
+    onGoBack: () -> Unit,
+    onGoHome: () -> Unit
+) {
+    val baseOptions = listOf(0, 3000, 4800, 5800, 6700, 10000)
+    val stepOptions = listOf(50, 100, 120, 140, 200, 300)
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(start = 18.dp, end = 18.dp, top = 44.dp, bottom = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        StandaloneDetailHeader(
+            title = "커스텀 요금제",
+            subtitle = if (useCustomFare) "현재 커스텀 요금제를 사용 중입니다." else "값을 선택하면 커스텀 요금제로 전환됩니다.",
+            onGoBack = onGoBack
+        )
+
+        CustomFareOptionPanel(
+            title = "기본요금",
+            subtitle = "주행을 시작하면 바로 적용되는 금액",
+            options = baseOptions,
+            selectedValue = baseFare,
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            onSelect = { onSelectCustomFare(it, stepFare) }
+        )
+
+        CustomFareOptionPanel(
+            title = "100m당 요금",
+            subtitle = "주행거리 100m가 늘 때마다 더해지는 금액",
+            options = stepOptions,
+            selectedValue = stepFare,
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            onSelect = { onSelectCustomFare(baseFare, it) }
+        )
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            GhostButton(text = "뒤로가기", modifier = Modifier.weight(1f), height = 76.dp, fontSize = 20.sp, onClick = onGoBack)
+            OrangeButton(text = "적용 완료", modifier = Modifier.weight(1f), height = 76.dp, onClick = onGoHome)
+        }
+    }
+}
+
+@Composable
+private fun CustomFareOptionPanel(
+    title: String,
+    subtitle: String,
+    options: List<Int>,
+    selectedValue: Int,
+    modifier: Modifier = Modifier,
+    onSelect: (Int) -> Unit
+) {
+    Card(
+        modifier = modifier,
+        shape = G2RoundedCornerShape(30.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.96f)),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.48f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(22.dp),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                Text(text = title, color = DarkText, fontSize = 30.sp, fontWeight = FontWeight.Black)
+                Text(text = subtitle, color = GrayText, fontSize = 17.sp, fontWeight = FontWeight.Medium)
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                options.chunked(3).forEach { rowItems ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        rowItems.forEach { value ->
+                            val selected = value == selectedValue
+                            Button(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(68.dp),
+                                onClick = { onSelect(value) },
+                                shape = G2RoundedCornerShape(22.dp),
+                                elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp, pressedElevation = 0.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (selected) PrimaryBlue else ButtonGray,
+                                    contentColor = if (selected) Color.White else DarkText
+                                )
+                            ) {
+                                Text(text = "${value.formatWon()}원", fontSize = 18.sp, fontWeight = FontWeight.Black)
+                            }
+                        }
+                        repeat(3 - rowItems.size) {
+                            Spacer(modifier = Modifier.weight(1f))
+                        }
                     }
                 }
             }
@@ -3550,94 +4200,98 @@ private fun EndRideScreen(
     val extraFare = extraText.toIntOrNull() ?: 0
     val totalFare = rideFare + tollFare + extraFare
 
-    TopBar()
-    PageHeader(
-        title = "$passengerName 손님,",
-        subtitle = "오늘 주행은 어떠셨나요?"
-    )
-
-    val frostedShape = G2RoundedCornerShape(28.dp)
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(330.dp),
-        shape = frostedShape,
-        colors = CardDefaults.cardColors(containerColor = Color.Transparent),
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.42f)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
-        Box(modifier = Modifier.fillMaxSize()) {
-            Image(
-                painter = painterResource(id = selectedTheme.drawableRes),
-                contentDescription = null,
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop
-            )
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            colors = listOf(
-                                Color.Black.copy(alpha = 0.18f),
-                                Color.Black.copy(alpha = 0.08f),
-                                Color.Black.copy(alpha = 0.22f)
+        PageHeader(
+            title = "$passengerName 손님,",
+            subtitle = "오늘 주행은 어떠셨나요?"
+        )
+
+        val frostedShape = G2RoundedCornerShape(28.dp)
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(340.dp),
+            shape = frostedShape,
+            colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+            border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.42f)),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+        ) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                Image(
+                    painter = painterResource(id = selectedTheme.drawableRes),
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(
+                                    Color.Black.copy(alpha = 0.18f),
+                                    Color.Black.copy(alpha = 0.08f),
+                                    Color.Black.copy(alpha = 0.22f)
+                                )
                             )
                         )
-                    )
-            )
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(30.dp),
-                verticalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(text = "총 결제 예정 금액", color = Color.White.copy(alpha = 0.9f), fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                    Text(
-                        text = "${totalFare.formatWon()}원",
-                        modifier = Modifier.fillMaxWidth(),
-                        color = Color.White,
-                        fontSize = 68.sp,
-                        fontWeight = FontWeight.Black,
-                        textAlign = TextAlign.End
-                    )
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                )
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(32.dp),
+                    verticalArrangement = Arrangement.SpaceBetween
                 ) {
-                    FrostMetricCard(
-                        title = "총 주행 시간",
-                        value = pendingRide?.durationSeconds?.formatDuration() ?: "00:00:00",
-                        modifier = Modifier.weight(1f)
-                    )
-                    FrostMetricCard(
-                        title = "총 주행 거리",
-                        value = "%.1fkm".format(pendingRide?.distanceKm ?: 0f),
-                        modifier = Modifier.weight(1f)
-                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(text = "총 결제 예정 금액", color = Color.White.copy(alpha = 0.9f), fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                        Text(
+                            text = "${totalFare.formatWon()}원",
+                            modifier = Modifier.fillMaxWidth(),
+                            color = Color.White,
+                            fontSize = 68.sp,
+                            fontWeight = FontWeight.Black,
+                            textAlign = TextAlign.End
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        FrostMetricCard(
+                            title = "총 주행 시간",
+                            value = pendingRide?.durationSeconds?.formatDuration() ?: "00:00:00",
+                            modifier = Modifier.weight(1f)
+                        )
+                        FrostMetricCard(
+                            title = "총 주행 거리",
+                            value = "%.1fkm".format(pendingRide?.distanceKm ?: 0f),
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
                 }
             }
         }
-    }
 
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = G2RoundedCornerShape(28.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-    ) {
-        Column(modifier = Modifier.padding(30.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-            Text(text = "정산 입력", color = DarkText, fontSize = 28.sp, fontWeight = FontWeight.Black)
-            Text(text = "통행료나 별도 합의한 추가요금이 있으면 입력하세요.", color = GrayText, fontSize = 18.sp, fontWeight = FontWeight.Medium)
-            FareField(label = "운행요금", value = rideFare.formatWon(), enabled = false, onValueChange = {})
-            FareField(label = "통행요금", value = tollText, enabled = true, onValueChange = onTollChange)
-            FareField(label = "추가요금", value = extraText, enabled = true, onValueChange = onExtraChange)
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = G2RoundedCornerShape(28.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+        ) {
+            Column(modifier = Modifier.padding(32.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
+                Text(text = "정산 입력", color = DarkText, fontSize = 28.sp, fontWeight = FontWeight.Black)
+                Text(text = "통행료나 별도 합의한 추가요금이 있으면 입력하세요.", color = GrayText, fontSize = 18.sp, fontWeight = FontWeight.Medium)
+                FareField(label = "운행요금", value = rideFare.formatWon(), enabled = false, onValueChange = {})
+                FareField(label = "통행요금", value = tollText, enabled = true, onValueChange = onTollChange)
+                FareField(label = "추가요금", value = extraText, enabled = true, onValueChange = onExtraChange)
+            }
         }
-    }
 
-    OrangeButton(text = "주행 완료", modifier = Modifier.fillMaxWidth(), onClick = onSaveRide)
+        OrangeButton(text = "주행 완료", modifier = Modifier.fillMaxWidth(), height = 84.dp, onClick = onSaveRide)
+    }
 }
 
 @Composable
@@ -3651,7 +4305,6 @@ private fun HistoryScreen(
     returnButtonText: String,
     onReturnClick: () -> Unit
 ) {
-    TopBar()
     PageHeader(
         title = "내역 보기",
         subtitle = if (widgetSelectionMode) "위젯에 추가할 손님을 선택하세요." else "완료한 주행내역을 선택하면 영수증으로 볼 수 있어요."
@@ -3747,14 +4400,23 @@ private fun PassengerHistoryScreen(
     val monthRecords = passengerRecords.filter { record ->
         record.recordDateOrNull()?.let { YearMonth.from(it) == selectedMonth } == true
     }
+    val monthTotalFare = monthRecords.sumOf { it.totalFare }
+    val monthSettledFare = monthRecords.filter { it.isSettled }.sumOf { it.totalFare }
+    val monthUnsettledFare = monthTotalFare - monthSettledFare
     val visibleRecords = selectedDate?.let { date ->
         monthRecords.filter { it.recordDateOrNull() == date }
     } ?: monthRecords
 
-    TopBar()
     PageHeader(
         title = "$name 손님",
-        subtitle = "언제 카풀을 이용했는지 한눈에 볼 수 있어요."
+        subtitle = "언제 카풀을 이용했고, 얼마가 부과됐는지 알 수 있어요."
+    )
+
+    MonthlySettlementSummary(
+        month = selectedMonth.monthValue,
+        totalFare = monthTotalFare,
+        settledFare = monthSettledFare,
+        unsettledFare = monthUnsettledFare
     )
 
     PassengerCalendarCard(
@@ -3773,12 +4435,6 @@ private fun PassengerHistoryScreen(
         onClick = onGoFullHistory
     )
     GhostButton(text = "뒤로가기", modifier = Modifier.fillMaxWidth(), onClick = onGoBack)
-    Text(
-        text = selectedDate?.let { "${it.monthValue}월 ${it.dayOfMonth}일 이용 목록" } ?: "이용 목록",
-        color = DarkText,
-        fontSize = 24.sp,
-        fontWeight = FontWeight.Black
-    )
     if (visibleRecords.isEmpty()) {
         Card(
             modifier = Modifier.fillMaxWidth(),
@@ -3824,6 +4480,75 @@ private fun PassengerHistoryScreen(
 }
 
 @Composable
+private fun MonthlySettlementSummary(
+    month: Int,
+    totalFare: Int,
+    settledFare: Int,
+    unsettledFare: Int
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = G2RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.96f)),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.46f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            MonthlySettlementItem(
+                title = "${month}월 누적금액",
+                value = "${totalFare.formatWon()}원",
+                modifier = Modifier.weight(1f)
+            )
+            MonthlySettlementItem(
+                title = "정산금액",
+                value = "${settledFare.formatWon()}원",
+                valueColor = PrimaryBlue,
+                modifier = Modifier.weight(1f)
+            )
+            MonthlySettlementItem(
+                title = "정산되지 못한 금액",
+                value = "${unsettledFare.formatWon()}원",
+                valueColor = if (unsettledFare > 0) Color(0xFF424A56) else GrayText,
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
+}
+
+@Composable
+private fun MonthlySettlementItem(
+    title: String,
+    value: String,
+    modifier: Modifier = Modifier,
+    valueColor: Color = DarkText
+) {
+    Column(
+        modifier = modifier
+            .background(Panel, G2RoundedCornerShape(18.dp))
+            .padding(horizontal = 10.dp, vertical = 13.dp),
+        verticalArrangement = Arrangement.spacedBy(7.dp)
+    ) {
+        Text(
+            text = title,
+            color = GrayText,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1
+        )
+        Text(
+            text = value,
+            color = valueColor,
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Black,
+            maxLines = 1
+        )
+    }
+}
+
+@Composable
 private fun PassengerFullHistoryScreen(
     passengerName: String?,
     records: List<RideRecord>,
@@ -3836,7 +4561,6 @@ private fun PassengerFullHistoryScreen(
         .sortedWith(compareByDescending<RideRecord> { it.recordDateOrNull() }.thenByDescending { it.endTime })
     val totalFare = passengerRecords.sumOf { it.totalFare }
 
-    TopBar()
     PageHeader(
         title = "$name 손님 전체 목록",
         subtitle = "이 손님의 모든 카풀 이용 기록입니다."
@@ -3877,7 +4601,7 @@ private fun PassengerFullHistoryScreen(
         }
     }
 
-    GhostButton(text = "뒤로가기", modifier = Modifier.fillMaxWidth(), onClick = onGoBack)
+    OrangeButton(text = "뒤로가기", modifier = Modifier.fillMaxWidth(), onClick = onGoBack)
 
     Text(
         text = "이용 목록",
@@ -4149,25 +4873,54 @@ private fun MonthPickerDialog(
 
 @Composable
 private fun PassengerRideRecordCard(record: RideRecord, onClick: () -> Unit) {
+    val shape = G2RoundedCornerShape(22.dp)
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick),
-        shape = G2RoundedCornerShape(22.dp),
+        shape = shape,
         colors = CardDefaults.cardColors(containerColor = Color.White),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
-        Row(
-            modifier = Modifier.padding(18.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                Text(text = "${record.date} ${record.endTime}", color = DarkText, fontSize = 19.sp, fontWeight = FontWeight.Black)
-                Text(text = "${record.durationSeconds.formatDuration()} · ${"%.1f".format(record.distanceKm)}km", color = GrayText, fontSize = 15.sp)
+        Box(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier.padding(18.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Text(text = "${record.date} ${record.endTime}", color = DarkText, fontSize = 19.sp, fontWeight = FontWeight.Black)
+                    Text(text = "${record.durationSeconds.formatDuration()} · ${"%.1f".format(record.distanceKm)}km", color = GrayText, fontSize = 15.sp)
+                }
+                Text(text = "${record.totalFare.formatWon()}원", color = PrimaryBlue, fontSize = 23.sp, fontWeight = FontWeight.Black)
             }
-            Text(text = "${record.totalFare.formatWon()}원", color = PrimaryBlue, fontSize = 23.sp, fontWeight = FontWeight.Black)
+            if (record.isSettled) {
+                SettledOverlay(modifier = Modifier.matchParentSize(), shape = shape)
+            }
         }
+    }
+}
+
+@Composable
+private fun SettledOverlay(
+    modifier: Modifier = Modifier,
+    shape: Shape,
+    fontSize: androidx.compose.ui.unit.TextUnit = 28.sp
+) {
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(Color(0xFF6F7782).copy(alpha = 0.66f), shape)
+            .border(1.dp, Color.White.copy(alpha = 0.32f), shape),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = "-정산됨-",
+            color = Color.White,
+            fontSize = fontSize,
+            fontWeight = FontWeight.Black,
+            textAlign = TextAlign.Center
+        )
     }
 }
 
@@ -4176,7 +4929,9 @@ private fun PassengerReceiptBoardScreen(
     passengerName: String?,
     records: List<RideRecord>,
     selectedTheme: MeshTheme,
-    onGoBack: () -> Unit
+    onGoBack: () -> Unit,
+    onShredRecord: (RideRecord) -> Unit,
+    onSettleRecord: (RideRecord) -> Unit
 ) {
     val name = passengerName ?: return
     val passengerRecords = records
@@ -4198,10 +4953,9 @@ private fun PassengerReceiptBoardScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(18.dp),
+                .padding(start = 18.dp, end = 18.dp, top = 44.dp, bottom = 18.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            TopBar()
             PassengerReceiptBoardHeader(
                 passengerName = name,
                 totalFare = passengerTotalFare
@@ -4381,7 +5135,15 @@ private fun PassengerReceiptBoardScreen(
                 BoardReceiptDetailOverlay(
                     record = record,
                     selectedTheme = record.receiptThemeOr(selectedTheme),
-                    onDismiss = { detailVisible = false }
+                    onDismiss = { detailVisible = false },
+                    onSettle = {
+                        onSettleRecord(record)
+                        detailVisible = false
+                    },
+                    onShred = {
+                        onShredRecord(record)
+                        detailVisible = false
+                    }
                 )
             }
         }
@@ -4612,13 +5374,15 @@ private fun TimelineBackground(
 private fun BoardReceiptDetailOverlay(
     record: RideRecord,
     selectedTheme: MeshTheme,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onSettle: () -> Unit,
+    onShred: () -> Unit
 ) {
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black.copy(alpha = 0.18f))
-            .padding(18.dp)
+            .padding(start = 18.dp, end = 18.dp, top = 44.dp, bottom = 18.dp)
     ) {
         Column(
             modifier = Modifier.fillMaxSize(),
@@ -4631,7 +5395,26 @@ private fun BoardReceiptDetailOverlay(
                     .fillMaxWidth()
                     .weight(1f)
             )
-            GhostButton(text = "뒤로가기", modifier = Modifier.fillMaxWidth(), onClick = onDismiss)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                ReceiptGhostButton(
+                    text = "뒤로가기",
+                    modifier = Modifier.weight(1f),
+                    onClick = onDismiss
+                )
+                ReceiptPrimaryButton(
+                    text = "정산하기",
+                    modifier = Modifier.weight(1f),
+                    onClick = onSettle
+                )
+                ReceiptShredIconButton(
+                    modifier = Modifier.width(116.dp),
+                    onClick = onShred
+                )
+            }
         }
     }
 }
@@ -4674,12 +5457,6 @@ private fun ReceiptDetailPaper(
             verticalArrangement = Arrangement.SpaceBetween
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                Box(
-                    modifier = Modifier
-                        .width(168.dp)
-                        .height(14.dp)
-                        .background(Color(0xFF5A5F6A), G2RoundedCornerShape(999.dp))
-                )
                 Text(text = "카풀 영수증", color = textColor, fontSize = 30.sp, fontWeight = FontWeight.Black)
                 DashedLine(color = strongLineColor, thickness = 2)
             }
@@ -4711,6 +5488,9 @@ private fun ReceiptDetailPaper(
                     textAlign = TextAlign.End
                 )
             }
+        }
+        if (record.isSettled) {
+            SettledOverlay(shape = ReceiptPaperShape(), fontSize = 34.sp)
         }
     }
 }
@@ -4895,12 +5675,6 @@ private fun ReceiptThumbnailPaper(record: RideRecord, selectedTheme: MeshTheme) 
             verticalArrangement = Arrangement.SpaceBetween
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                Box(
-                    modifier = Modifier
-                        .width(82.dp)
-                        .height(8.dp)
-                        .background(Color(0xFF5A5F6A), G2RoundedCornerShape(999.dp))
-                )
                 Text(text = "카풀 영수증", color = textColor, fontSize = 17.sp, fontWeight = FontWeight.Black)
                 DashedLine(color = lineColor, thickness = 1)
             }
@@ -4928,6 +5702,9 @@ private fun ReceiptThumbnailPaper(record: RideRecord, selectedTheme: MeshTheme) 
                 )
             }
         }
+        if (record.isSettled) {
+            SettledOverlay(shape = ReceiptPaperShape(), fontSize = 22.sp)
+        }
     }
 }
 
@@ -4949,7 +5726,8 @@ private fun ReceiptScreen(
     selectedTheme: MeshTheme,
     onGoHistory: () -> Unit,
     onGoHome: () -> Unit,
-    onShredRecord: (RideRecord) -> Unit
+    onShredRecord: (RideRecord) -> Unit,
+    onSettleRecord: (RideRecord) -> Unit
 ) {
     val item = record
     if (item == null) {
@@ -5051,7 +5829,7 @@ private fun ReceiptScreen(
             contentAlignment = Alignment.TopCenter
         ) {
             val shredderWidth = (maxWidth - 16.dp).coerceAtLeast(280.dp)
-            val receiptContentWidth = shredderWidth * 0.82f
+            val receiptContentWidth = shredderWidth * 0.90f
 
             AnimatedVisibility(
                 visible = receiptVisible,
@@ -5067,7 +5845,7 @@ private fun ReceiptScreen(
                 Box(
                     modifier = Modifier
                         .width(receiptContentWidth)
-                        .height(1090.dp)
+                        .height(1036.dp)
                         .graphicsLayer {
                             rotationY = receiptRotation
                             cameraDistance = 18f * density.density
@@ -5108,28 +5886,22 @@ private fun ReceiptScreen(
                             Column(
                                 modifier = Modifier
                                     .fillMaxSize()
-                                    .padding(start = 38.dp, end = 38.dp, top = 26.dp, bottom = 110.dp),
+                                    .padding(start = 36.dp, end = 36.dp, top = 24.dp, bottom = 86.dp),
                                 verticalArrangement = Arrangement.SpaceBetween
                             ) {
-                                Column(verticalArrangement = Arrangement.spacedBy(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Box(
-                                        modifier = Modifier
-                                            .width(230.dp)
-                                            .height(18.dp)
-                                            .background(Color(0xFF5A5F6A), G2RoundedCornerShape(7.dp))
-                                    )
+                                Column(verticalArrangement = Arrangement.spacedBy(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                                     GlassIconContainer(symbol = "♞", size = 52.dp, fontSize = 28.sp)
                                     Text(text = "카풀 영수증", color = receiptTextColor, fontSize = 34.sp, fontWeight = FontWeight.Black)
                                     DashedLine(color = receiptStrongLineColor, thickness = 2)
                                 }
 
-                                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                                     Text(text = "${item.passengerName} 손님,", color = receiptTextColor, fontSize = 40.sp, fontWeight = FontWeight.Black)
                                     Text(text = "카풀미터기를 이용해주셔서 감사합니다", color = receiptMutedColor, fontSize = 20.sp, fontWeight = FontWeight.Medium)
                                     ThickLine(color = receiptStrongLineColor)
                                 }
 
-                                Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
+                                Column(verticalArrangement = Arrangement.spacedBy(15.dp)) {
                                     ReceiptRow("탑승일자", item.date, textColor = receiptTextColor, valueColor = receiptTextColor, amountColor = receiptAmountColor)
                                     ReceiptRow("하차시각", item.endTime, textColor = receiptTextColor, valueColor = receiptTextColor, amountColor = receiptAmountColor)
                                     DashedLine(color = receiptSoftLineColor)
@@ -5143,12 +5915,12 @@ private fun ReceiptScreen(
 
                                 Column(
                                     modifier = Modifier.fillMaxWidth(),
-                                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp),
                                     horizontalAlignment = Alignment.CenterHorizontally
                                 ) {
                                     DashedLine(color = receiptStrongLineColor, thickness = 2)
                                     Text(text = "총 운행요금", color = receiptMutedColor, fontSize = 24.sp, fontWeight = FontWeight.Black)
-                                    Text(text = "${item.totalFare.formatWon()}원", modifier = Modifier.fillMaxWidth(), color = receiptAmountColor, fontSize = 82.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.End)
+                                    Text(text = "${item.totalFare.formatWon()}원", modifier = Modifier.fillMaxWidth(), color = receiptAmountColor, fontSize = 76.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.End)
                                 }
                             }
                             Canvas(modifier = Modifier.fillMaxSize()) {
@@ -5162,6 +5934,9 @@ private fun ReceiptScreen(
                                 )
                             }
                             ShreddedReceiptOverlay(progress = shredProgress.value)
+                            if (item.isSettled) {
+                                SettledOverlay(shape = ReceiptPaperShape(), fontSize = 44.sp)
+                            }
                         }
                     }
                 }
@@ -5178,9 +5953,17 @@ private fun ReceiptScreen(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    ReceiptPrimaryButton(text = "홈으로", modifier = Modifier.weight(1f), onClick = onGoHome)
+                    ReceiptGhostButton(text = "장부에 저장", modifier = Modifier.weight(1f), onClick = onGoHome)
+                    ReceiptPrimaryButton(
+                        text = "지금 정산하기",
+                        modifier = Modifier.weight(1f),
+                        onClick = {
+                            onSettleRecord(item)
+                            onGoHome()
+                        }
+                    )
                     ReceiptShredIconButton(
-                        modifier = Modifier.width(132.dp),
+                        modifier = Modifier.width(116.dp),
                         onClick = {
                             if (!shredSuccessVisible) {
                                 receiptBackVisible = true
@@ -5190,7 +5973,7 @@ private fun ReceiptScreen(
                     )
                 }
             } else {
-                ReceiptPrimaryButton(text = "홈으로", modifier = modifier, onClick = onGoHome)
+                ReceiptPrimaryButton(text = "장부에 저장", modifier = modifier, onClick = onGoHome)
             }
         }
     }
@@ -5316,12 +6099,6 @@ private fun ReceiptBackPaper(
         ) {
             Box(
                 modifier = Modifier
-                    .width(230.dp)
-                    .height(18.dp)
-                    .background(Color(0xFF5A5F6A), G2RoundedCornerShape(7.dp))
-            )
-            Box(
-                modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
                     .padding(vertical = 44.dp)
@@ -5408,8 +6185,8 @@ private fun ReceiptShredIconButton(modifier: Modifier = Modifier, onClick: () ->
         )
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(1.dp)) {
-            Text(text = "▥", fontSize = 25.sp, fontWeight = FontWeight.Black, lineHeight = 25.sp)
-            Text(text = "파쇄", fontSize = 14.sp, fontWeight = FontWeight.Black, lineHeight = 14.sp)
+            Text(text = "▥", fontSize = 28.sp, fontWeight = FontWeight.Black, lineHeight = 28.sp)
+            Text(text = "파쇄", fontSize = 16.sp, fontWeight = FontWeight.Black, lineHeight = 16.sp)
         }
     }
 }
@@ -5439,30 +6216,32 @@ private fun ShredderSheet(
             modifier = Modifier.fillMaxWidth(),
             contentAlignment = Alignment.BottomCenter
         ) {
-            val receiptHorizontalPadding = 8.dp
-            val sheetWidth = ((maxWidth - receiptHorizontalPadding * 2f) * 0.86f).coerceAtLeast(280.dp)
-            val sheetHeight = sheetWidth * (446f / 559f)
-            val restingOffset = sheetHeight * 0.56f
-            val riseOffset = -(sheetHeight + 140.dp) * progress.coerceIn(0f, 1f)
+            val sheetWidth = (maxWidth * 1.08f).coerceAtLeast(360.dp).coerceAtMost(820.dp)
+            val sheetHeight = sheetWidth * 0.43f
+            val imageHeight = sheetWidth * 0.30f
+            val restingOffset = 42.dp
+            val riseOffset = -(sheetHeight + 150.dp) * progress.coerceIn(0f, 1f)
             val compact = sheetWidth < 420.dp
-            val shredderImageScaleX = 1.3f
-            val buttonStackWidth = sheetWidth * if (compact) 0.62f else 0.64f
-            val buttonHeight = if (compact) 34.dp else 42.dp
-            val buttonTopPadding = if (compact) sheetHeight * 0.34f else sheetHeight * 0.36f
+            val buttonStackWidth = (sheetWidth * if (compact) 0.58f else 0.60f)
+                .coerceAtLeast(if (compact) 280.dp else 360.dp)
+                .coerceAtMost(sheetWidth * 0.70f)
+            val buttonHeight = if (compact) 48.dp else 58.dp
+            val buttonGap = if (compact) 10.dp else 12.dp
 
             Box(
                 modifier = Modifier
                     .width(sheetWidth)
                     .offset(y = restingOffset + if (shredding) riseOffset else 0.dp)
-                    .aspectRatio(559f / 446f)
+                    .height(sheetHeight)
                     .clipToBounds()
             ) {
                 Image(
-                    painter = painterResource(id = if (shredding) R.drawable.papercut2 else R.drawable.papercut3),
+                    painter = painterResource(id = R.drawable.papercut7_visible),
                     contentDescription = null,
                     modifier = Modifier
-                        .fillMaxSize()
-                        .graphicsLayer { scaleX = shredderImageScaleX },
+                        .align(Alignment.BottomCenter)
+                        .width(sheetWidth)
+                        .height(imageHeight),
                     contentScale = ContentScale.FillBounds
                 )
 
@@ -5471,20 +6250,20 @@ private fun ShredderSheet(
                         text = "영수증을 파쇄하시겠습니까?",
                         modifier = Modifier
                             .align(Alignment.TopCenter)
-                            .padding(top = if (compact) 38.dp else 52.dp),
-                        color = Color(0xFF4F565C),
-                        fontSize = if (compact) 19.sp else 22.sp,
+                            .padding(top = 8.dp),
+                        color = Color(0xFF24313D),
+                        fontSize = if (compact) 23.sp else 28.sp,
                         fontWeight = FontWeight.Black,
                         textAlign = TextAlign.Center,
-                        lineHeight = if (compact) 24.sp else 28.sp
+                        lineHeight = if (compact) 28.sp else 34.sp,
+                        maxLines = 1
                     )
-
                     Column(
                         modifier = Modifier
-                            .align(Alignment.TopCenter)
-                            .width(buttonStackWidth)
-                            .padding(top = buttonTopPadding),
-                        verticalArrangement = Arrangement.spacedBy(if (compact) 5.dp else 8.dp),
+                            .align(Alignment.Center)
+                            .offset(y = -(sheetHeight * 0.03f))
+                            .width(buttonStackWidth),
+                        verticalArrangement = Arrangement.spacedBy(buttonGap),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Button(
@@ -5502,7 +6281,7 @@ private fun ShredderSheet(
                                 disabledContentColor = Color.White
                             )
                         ) {
-                            Text(text = "파쇄하기", fontSize = if (compact) 16.sp else 18.sp, fontWeight = FontWeight.Black)
+                            Text(text = "파쇄하기", fontSize = if (compact) 18.sp else 22.sp, fontWeight = FontWeight.Black)
                         }
                         Button(
                             modifier = Modifier
@@ -5514,13 +6293,13 @@ private fun ShredderSheet(
                             border = androidx.compose.foundation.BorderStroke(2.dp, Color(0x994C555D)),
                             elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp, pressedElevation = 0.dp),
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = Color.White.copy(alpha = 0.20f),
+                                containerColor = Color.White.copy(alpha = 0.88f),
                                 contentColor = Color(0xFF4C555D),
-                                disabledContainerColor = Color.White.copy(alpha = 0.12f),
+                                disabledContainerColor = Color.White.copy(alpha = 0.48f),
                                 disabledContentColor = Color(0x884C555D)
                             )
                         ) {
-                            Text(text = "취소", fontSize = if (compact) 15.sp else 17.sp, fontWeight = FontWeight.Black)
+                            Text(text = "취소", fontSize = if (compact) 17.sp else 20.sp, fontWeight = FontWeight.Black)
                         }
                     }
                 }
@@ -5672,19 +6451,15 @@ private fun GlassTextChip(
     verticalPadding: Dp = 9.dp,
     onClick: (() -> Unit)? = null
 ) {
-    val shape = G2RoundedCornerShape(999.dp)
+    val shape = G2RoundedCornerShape(22.dp)
     Box(
         modifier = modifier
+            .heightIn(min = 46.dp)
+            .background(Color.White.copy(alpha = 0.22f), shape)
+            .border(1.dp, Color.White.copy(alpha = 0.24f), shape)
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
         contentAlignment = Alignment.Center
     ) {
-        Box(
-            modifier = Modifier
-                .matchParentSize()
-                .blur(12.dp)
-                .background(Color.White.copy(alpha = 0.20f), shape)
-                .border(1.dp, Color.White.copy(alpha = 0.28f), shape)
-        )
         Text(
             text = text,
             modifier = Modifier.padding(horizontal = horizontalPadding, vertical = verticalPadding),
@@ -5693,43 +6468,6 @@ private fun GlassTextChip(
             fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center
         )
-    }
-}
-
-@Composable
-private fun TopBar() {
-    val shape = G2RoundedCornerShape(24.dp)
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(Color.White.copy(alpha = 0.18f), shape)
-            .border(1.dp, Color.White.copy(alpha = 0.30f), shape)
-    ) {
-        Box(
-            modifier = Modifier
-                .matchParentSize()
-                .blur(18.dp)
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(
-                            Color.White.copy(alpha = 0.32f),
-                            Color.White.copy(alpha = 0.14f),
-                            Color.White.copy(alpha = 0.22f)
-                        )
-                    ),
-                    shape
-                )
-        )
-        Row(
-            modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.Start,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                GlassIconContainer(symbol = "♞", size = 42.dp, fontSize = 22.sp)
-                Text(text = "카풀 미터기", color = DarkText, fontSize = 20.sp, fontWeight = FontWeight.Black)
-            }
-        }
     }
 }
 
@@ -5843,9 +6581,16 @@ private fun FareField(label: String, value: String, enabled: Boolean, onValueCha
 }
 
 @Composable
-private fun AnimatedActionButton(text: String, modifier: Modifier = Modifier, active: Boolean, onClick: () -> Unit) {
+private fun AnimatedActionButton(
+    text: String,
+    modifier: Modifier = Modifier,
+    active: Boolean,
+    height: Dp = 76.dp,
+    fontSize: androidx.compose.ui.unit.TextUnit = 19.sp,
+    onClick: () -> Unit
+) {
     val containerColor by animateColorAsState(
-        targetValue = if (active) Orange else Color(0xFFD8DEE8),
+        targetValue = if (active) Orange else DisabledButtonGray,
         animationSpec = tween(durationMillis = 360, easing = FastOutSlowInEasing),
         label = "$text container"
     )
@@ -5855,10 +6600,10 @@ private fun AnimatedActionButton(text: String, modifier: Modifier = Modifier, ac
         label = "$text content"
     )
 
-    val shape = G2RoundedCornerShape(999.dp)
+    val shape = G2RoundedCornerShape(22.dp)
     Button(
         modifier = modifier
-            .height(76.dp),
+            .height(height),
         onClick = onClick,
         enabled = active,
         shape = shape,
@@ -5870,16 +6615,16 @@ private fun AnimatedActionButton(text: String, modifier: Modifier = Modifier, ac
             disabledContentColor = contentColor
         )
     ) {
-        Text(text = text, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+        Text(text = text, fontSize = fontSize, fontWeight = FontWeight.Bold)
     }
 }
 
 @Composable
-private fun OrangeButton(text: String, modifier: Modifier = Modifier, enabled: Boolean = true, onClick: () -> Unit) {
+private fun OrangeButton(text: String, modifier: Modifier = Modifier, enabled: Boolean = true, height: Dp = 62.dp, onClick: () -> Unit) {
     val shape = G2RoundedCornerShape(999.dp)
     Button(
         modifier = modifier
-            .height(62.dp),
+            .height(height),
         onClick = onClick,
         enabled = enabled,
         shape = shape,
@@ -5887,7 +6632,7 @@ private fun OrangeButton(text: String, modifier: Modifier = Modifier, enabled: B
         colors = ButtonDefaults.buttonColors(
             containerColor = Orange,
             contentColor = Color.White,
-            disabledContainerColor = Color(0xFFD8DEE8),
+            disabledContainerColor = DisabledButtonGray,
             disabledContentColor = Color(0xFF8C96A6)
         )
     ) {
@@ -5896,11 +6641,18 @@ private fun OrangeButton(text: String, modifier: Modifier = Modifier, enabled: B
 }
 
 @Composable
-private fun GhostButton(text: String, modifier: Modifier = Modifier, enabled: Boolean = true, onClick: () -> Unit) {
+private fun GhostButton(
+    text: String,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    height: Dp = 62.dp,
+    fontSize: androidx.compose.ui.unit.TextUnit = 18.sp,
+    onClick: () -> Unit
+) {
     val shape = G2RoundedCornerShape(999.dp)
     Button(
         modifier = modifier
-            .height(62.dp),
+            .height(height),
         onClick = onClick,
         enabled = enabled,
         shape = shape,
@@ -5908,11 +6660,28 @@ private fun GhostButton(text: String, modifier: Modifier = Modifier, enabled: Bo
         colors = ButtonDefaults.buttonColors(
             containerColor = Panel,
             contentColor = DarkText,
-            disabledContainerColor = Color(0xFFD8DEE8),
+            disabledContainerColor = DisabledButtonGray,
             disabledContentColor = Color(0xFFB8B8B8)
         )
     ) {
-        Text(text = text, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Text(text = text, fontSize = fontSize, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun DangerButton(text: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val shape = G2RoundedCornerShape(22.dp)
+    Button(
+        modifier = modifier.height(76.dp),
+        onClick = onClick,
+        shape = shape,
+        elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp, pressedElevation = 0.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = Color(0xFFE8473F),
+            contentColor = Color.White
+        )
+    ) {
+        Text(text = text, fontSize = 20.sp, fontWeight = FontWeight.Black)
     }
 }
 
@@ -6040,7 +6809,7 @@ private class ReceiptPaperShape : Shape {
         val toothWidth = 26f
         val cutDepth = 17f
         val paperBottom = size.height - cutDepth - 9f
-        val radius = with(density) { 26.dp.toPx() }
+        val radius = with(density) { 12.dp.toPx() }
 
         val path = Path().apply {
             moveTo(radius, 0f)
@@ -6116,7 +6885,9 @@ private enum class AppScreen {
     PassengerHistory,
     PassengerFullHistory,
     Receipt,
+    FareModeSelect,
     FareSettings,
+    CustomFareSettings,
     ThemeSettings
 }
 
@@ -6139,7 +6910,8 @@ private data class RideRecord(
     val tollFare: Int,
     val extraFare: Int,
     val totalFare: Int,
-    val themeCode: String
+    val themeCode: String,
+    val isSettled: Boolean = false
 )
 
 private data class ChallengeItem(
@@ -6327,6 +7099,20 @@ private data class FarePolicy(
                 shortLabel = surchargeMode.shortLabel
             )
         }
+
+        fun custom(baseFare: Int, stepFare: Int, surchargeMode: SurchargeMode): FarePolicy {
+            val multiplier = surchargeMode.multiplier
+            val labelPrefix = "커스텀 요금"
+            return FarePolicy(
+                regionName = "커스텀",
+                baseDistanceKm = 0f,
+                stepDistanceMeters = 100f,
+                baseFare = (baseFare * multiplier).roundToNearestTen(),
+                stepFare = (stepFare * multiplier).roundToNearestTen(),
+                label = if (surchargeMode == SurchargeMode.Normal) labelPrefix else "$labelPrefix · ${surchargeMode.displayName}",
+                shortLabel = "커스텀"
+            )
+        }
     }
 }
 
@@ -6400,6 +7186,20 @@ private fun Long.formatDuration(): String {
 
 private fun Int.formatWon(): String = "%,d".format(this)
 
+private fun FarePolicy.summaryText(): String =
+    if (baseDistanceKm <= 0f) {
+        "$label · 기본요금 ${baseFare.formatWon()}원 · ${stepDistanceMeters.toInt()}m당 ${stepFare}원"
+    } else {
+        "$label · 기본 ${baseDistanceKm}km · ${stepDistanceMeters.toInt()}m당 ${stepFare}원"
+    }
+
+private fun FarePolicy.distanceRuleText(): String =
+    if (baseDistanceKm <= 0f) {
+        "시작 직후부터 ${stepDistanceMeters.toInt()}m마다 ${stepFare}원씩 계산돼요"
+    } else {
+        "${baseDistanceKm}km 이후 ${stepDistanceMeters.toInt()}m마다 ${stepFare}원씩 계산돼요"
+    }
+
 private val RideRecordDateFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("yy/MM/dd")
 
 private fun RideRecord.recordDateOrNull(): LocalDate? =
@@ -6409,6 +7209,8 @@ private val PrimaryBlue = Color(0xFF0066CC)
 private val SoftBlue = Color(0xFFEAF4FF)
 private val AppBg = Color(0xFFF5F5F7)
 private val Panel = Color(0xFFFAFAFC)
+private val ButtonGray = Color(0xFFF0F2F6)
+private val DisabledButtonGray = Color(0xFFD3DAE4)
 private val Line = Color(0xFFE0E0E0)
 private val GlassWhite = Color.White.copy(alpha = 0.94f)
 private val Orange = PrimaryBlue
@@ -6418,6 +7220,11 @@ private val DarkText = Color(0xFF1D1D1F)
 private val GrayText = Color(0xFF7A7A7A)
 private val NoticeGreen = PrimaryBlue
 private val NoticeGreenSoft = SoftBlue
+private val HomePagerTopPadding = 28.dp
+private val HomePagerBottomPadding = 0.dp
+private val HomePagerSectionSpacing = 16.dp
+private val HomePagerIndicatorSlotHeight = 30.dp
+private val HomePagerIndicatorYOffset = (-8).dp
 
 private val AstaSans = FontFamily(
     Font(R.font.asta_sans_regular, FontWeight.Normal),
