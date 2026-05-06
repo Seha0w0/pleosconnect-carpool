@@ -99,6 +99,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
@@ -215,6 +216,7 @@ class MainActivity : ComponentActivity() {
 
     private var screen by mutableStateOf(AppScreen.Home)
     private var historyReturnScreen by mutableStateOf(AppScreen.Home)
+    private var receiptReturnScreen by mutableStateOf(AppScreen.Home)
     private var passengerName by mutableStateOf("김카풀")
     private var selectedRecord by mutableStateOf<RideRecord?>(null)
     private var selectedPassengerName by mutableStateOf<String?>(null)
@@ -366,11 +368,13 @@ class MainActivity : ComponentActivity() {
                 onExtraChange = { extraText = it.filter(Char::isDigit) },
                 onSaveRide = { savePendingRide() },
                 onSelectRecord = {
+                    receiptReturnScreen = screen
                     selectedRecord = it
                     screen = AppScreen.Receipt
                 },
                 onShredRecord = { shredRideRecord(it) },
                 onSettleRecord = { settleRideRecord(it) },
+                onGoReceiptBack = { goReceiptBack() },
                 onGoWidgetPicker = {
                     historyWidgetSelectionMode = true
                     selectedWidgetPassengerName = null
@@ -523,6 +527,7 @@ class MainActivity : ComponentActivity() {
 
         rideRecords.add(0, record)
         saveRideRecords(rideRecords)
+        receiptReturnScreen = AppScreen.Home
         selectedRecord = record
         currentFare = 0
         isRunning = false
@@ -534,6 +539,13 @@ class MainActivity : ComponentActivity() {
         tollText = ""
         extraText = ""
         screen = AppScreen.Receipt
+    }
+
+    private fun goReceiptBack() {
+        screen = when (receiptReturnScreen) {
+            AppScreen.Receipt -> AppScreen.Home
+            else -> receiptReturnScreen
+        }
     }
 
     private fun shredRideRecord(record: RideRecord) {
@@ -781,6 +793,7 @@ private fun CarpoolMeterApp(
     onSelectRecord: (RideRecord) -> Unit,
     onShredRecord: (RideRecord) -> Unit,
     onSettleRecord: (RideRecord) -> Unit,
+    onGoReceiptBack: () -> Unit,
     onGoWidgetPicker: () -> Unit,
     onSelectWidgetPassenger: (String) -> Unit,
     onAddWidgetPassenger: () -> Unit,
@@ -914,6 +927,13 @@ private fun CarpoolMeterApp(
                                 onGoBack = onGoFareSettings,
                                 onGoHome = onGoHome
                             )
+                        } else if (targetScreen == AppScreen.Donation) {
+                            DonationScreen(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(start = 18.dp, end = 18.dp, top = 44.dp, bottom = 18.dp),
+                                onGoBack = onGoSettingsPage
+                            )
                         } else {
                             BouncyScrollableColumn(
                                 modifier = Modifier
@@ -966,6 +986,7 @@ private fun CarpoolMeterApp(
                                         record = selectedRecord,
                                         selectedTheme = selectedTheme,
                                         onGoHistory = onGoHistory,
+                                        onGoBack = onGoReceiptBack,
                                         onGoHome = onGoHome,
                                         onShredRecord = onShredRecord,
                                         onSettleRecord = onSettleRecord
@@ -1548,10 +1569,13 @@ private fun PassengerWidgetPage(
         ) {
             Box(modifier = Modifier.fillMaxSize()) {
                 Image(
-                    painter = painterResource(id = R.drawable.inda),
+                    painter = painterResource(id = R.drawable.ppap2),
                     contentDescription = null,
-                    modifier = Modifier.matchParentSize(),
-                    contentScale = ContentScale.Crop
+                    modifier = Modifier
+                        .matchParentSize()
+                        .graphicsLayer { alpha = 0.72f },
+                    contentScale = ContentScale.Crop,
+                    alignment = BiasAlignment(horizontalBias = -0.34f, verticalBias = 0f)
                 )
 
                 Box(
@@ -1562,13 +1586,14 @@ private fun PassengerWidgetPage(
                         .clipToBounds()
                 ) {
                     Image(
-                        painter = painterResource(id = R.drawable.inda),
+                        painter = painterResource(id = R.drawable.ppap2),
                         contentDescription = null,
                         modifier = Modifier
                             .matchParentSize()
                             .blur(20.dp)
-                            .graphicsLayer { alpha = 0.72f },
-                        contentScale = ContentScale.Crop
+                            .graphicsLayer { alpha = 0.46f },
+                        contentScale = ContentScale.Crop,
+                        alignment = BiasAlignment(horizontalBias = -0.34f, verticalBias = 0f)
                     )
                 }
 
@@ -1578,10 +1603,43 @@ private fun PassengerWidgetPage(
                         .background(
                             Brush.verticalGradient(
                                 colorStops = arrayOf(
-                                    0.00f to Color.White.copy(alpha = 0.72f),
-                                    0.24f to Color.White.copy(alpha = 0.42f),
-                                    0.56f to Color.White.copy(alpha = 0.12f),
-                                    1.00f to Color.White.copy(alpha = 0.04f)
+                                    0.00f to Color.White.copy(alpha = 0.86f),
+                                    0.18f to Color.White.copy(alpha = 0.58f),
+                                    0.46f to Color.White.copy(alpha = 0.24f),
+                                    0.72f to Color.White.copy(alpha = 0.26f),
+                                    1.00f to Color.White.copy(alpha = 0.68f)
+                                )
+                            )
+                        )
+                )
+
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .fillMaxWidth()
+                        .height(180.dp)
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(
+                                    Color.White.copy(alpha = 0.88f),
+                                    Color.White.copy(alpha = 0.30f),
+                                    Color.Transparent
+                                )
+                            )
+                        )
+                )
+
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .height(210.dp)
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(
+                                    Color.Transparent,
+                                    Color.White.copy(alpha = 0.30f),
+                                    Color.White.copy(alpha = 0.82f)
                                 )
                             )
                         )
@@ -2456,7 +2514,7 @@ private fun HomeQuickSettingsPage(
     ) {
         BouncyScrollableColumn(
             modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             Card(
                 modifier = Modifier
@@ -2534,27 +2592,21 @@ private fun HomeQuickSettingsPage(
                 }
             }
 
-            DeveloperSupportBanner(
-                onClick = onGoDonation
-            )
-
             SmartSettingsCard(
+                modifier = Modifier.height(QuickSettingsSecondaryHeight),
                 autoSurchargeEnabled = autoSurchargeEnabled,
                 onAutoSurchargeChange = { autoSurchargeEnabled = it }
             )
 
-            Column(
+            DeveloperSupportBanner(
+                modifier = Modifier.height(QuickSettingsSupportHeight),
+                onClick = onGoDonation
+            )
+
+            SettingsInfoButton(
                 modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                GhostButton(
-                    text = "정보",
-                    modifier = Modifier.fillMaxWidth(),
-                    height = 82.dp,
-                    fontSize = 20.sp,
-                    onClick = onGoInfo
-                )
-            }
+                onClick = onGoInfo
+            )
         }
 
         HomePagerIndicatorSlot(currentPage = currentPage)
@@ -2894,7 +2946,10 @@ private data class DonationItem(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun DonationScreen(onGoBack: () -> Unit) {
+private fun DonationScreen(
+    modifier: Modifier = Modifier,
+    onGoBack: () -> Unit
+) {
     val donationItems = remember {
         listOf(
             DonationItem("🍬 졸음 번쩍 껌 한 통", "1,000원", R.drawable.ggum),
@@ -2910,7 +2965,7 @@ private fun DonationScreen(onGoBack: () -> Unit) {
     val pagerState = rememberPagerState(pageCount = { donationPages.size })
 
     Column(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
         StandaloneDetailHeader(
@@ -2923,17 +2978,16 @@ private fun DonationScreen(onGoBack: () -> Unit) {
             state = pagerState,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(760.dp),
+                .weight(1f),
             contentPadding = PaddingValues(end = 54.dp),
             pageSpacing = 16.dp
         ) { page ->
             DonationPageCard(items = donationPages[page])
         }
 
-        HomePagerIndicator(
+        HomePagerIndicatorSlot(
             currentPage = pagerState.currentPage,
-            pageCount = donationPages.size,
-            modifier = Modifier.fillMaxWidth()
+            pageCount = donationPages.size
         )
     }
 }
@@ -2950,8 +3004,8 @@ private fun DonationPageCard(items: List<DonationItem>) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(18.dp)
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             DonationGridRow(items = items.take(2), modifier = Modifier.weight(1f))
             DonationGridRow(items = items.drop(2).take(2), modifier = Modifier.weight(1f))
@@ -2997,14 +3051,14 @@ private fun DonationItemCard(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(14.dp),
+                .padding(12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f)
+                    .weight(1.22f)
                     .clip(G2RoundedCornerShape(26.dp))
                     .background(
                         Brush.linearGradient(
@@ -3040,7 +3094,11 @@ private fun DonationItemCard(
                     contentDescription = null,
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(18.dp),
+                        .padding(6.dp)
+                        .graphicsLayer {
+                            scaleX = 1.08f
+                            scaleY = 1.08f
+                        },
                     contentScale = ContentScale.Fit
                 )
             }
@@ -3083,10 +3141,11 @@ private data class SupportSnack(
 
 @Composable
 private fun DeveloperSupportBanner(
+    modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
     Card(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clickable(onClick = onClick),
         shape = G2RoundedCornerShape(30.dp),
@@ -3095,7 +3154,7 @@ private fun DeveloperSupportBanner(
     ) {
         Box(
             modifier = Modifier
-                .fillMaxWidth()
+                .fillMaxSize()
                 .background(
                     Brush.linearGradient(
                         colors = listOf(
@@ -3121,8 +3180,10 @@ private fun DeveloperSupportBanner(
                     )
             )
             Column(
-                modifier = Modifier.padding(horizontal = 22.dp, vertical = 22.dp),
-                verticalArrangement = Arrangement.spacedBy(18.dp),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 26.dp, vertical = 22.dp),
+                verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
@@ -3135,6 +3196,25 @@ private fun DeveloperSupportBanner(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun SettingsInfoButton(
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Button(
+        modifier = modifier.height(QuickSettingsSecondaryHeight),
+        onClick = onClick,
+        shape = G2RoundedCornerShape(30.dp),
+        elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp, pressedElevation = 0.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = Panel,
+            contentColor = DarkText
+        )
+    ) {
+        Text(text = "정보", fontSize = 22.sp, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -3176,46 +3256,55 @@ private fun SupportSnackButton(snack: SupportSnack) {
 
 @Composable
 private fun SmartSettingsCard(
+    modifier: Modifier = Modifier,
     autoSurchargeEnabled: Boolean,
     onAutoSurchargeChange: (Boolean) -> Unit
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         shape = G2RoundedCornerShape(28.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
-        Column(
-            modifier = Modifier.padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(18.dp)
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 22.dp, vertical = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(18.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(text = "스마트 설정", color = DarkText, fontSize = 26.sp, fontWeight = FontWeight.Black)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                verticalAlignment = Alignment.CenterVertically
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(7.dp)
             ) {
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(7.dp)
-                ) {
-                    Text(
-                        text = "⏰ 지역 및 시간 기반 자동 할증",
-                        color = DarkText,
-                        fontSize = 21.sp,
-                        fontWeight = FontWeight.Black
-                    )
-                    Text(
-                        text = "선택한 지역과 현재 시간을 인식해 할증 요금을 자동으로 적용합니다",
-                        color = GrayText,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Medium,
-                        lineHeight = 21.sp
-                    )
-                }
+                Text(text = "스마트 설정", color = DarkText, fontSize = 25.sp, fontWeight = FontWeight.Black)
+                Text(
+                    text = "⏰ 지역 및 시간 기반 자동 할증",
+                    color = DarkText,
+                    fontSize = 19.sp,
+                    fontWeight = FontWeight.Black
+                )
+                Text(
+                    text = "선택한 지역과 현재 시간을 인식해 할증 요금을 자동으로 적용합니다",
+                    color = GrayText,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                    lineHeight = 20.sp
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .width(112.dp)
+                    .height(88.dp),
+                contentAlignment = Alignment.Center
+            ) {
                 Switch(
                     checked = autoSurchargeEnabled,
                     onCheckedChange = onAutoSurchargeChange,
+                    modifier = Modifier.graphicsLayer {
+                        scaleX = 1.22f
+                        scaleY = 1.22f
+                    },
                     colors = SwitchDefaults.colors(
                         checkedThumbColor = Color.White,
                         checkedTrackColor = PrimaryBlue,
@@ -3231,6 +3320,7 @@ private fun SmartSettingsCard(
 @Composable
 private fun HomePagerIndicatorSlot(
     currentPage: Int,
+    pageCount: Int = 3,
     modifier: Modifier = Modifier
 ) {
     Box(
@@ -3241,7 +3331,7 @@ private fun HomePagerIndicatorSlot(
     ) {
         HomePagerIndicator(
             currentPage = currentPage,
-            pageCount = 3,
+            pageCount = pageCount,
             modifier = Modifier
                 .fillMaxWidth()
                 .offset(y = HomePagerIndicatorYOffset)
@@ -5725,6 +5815,7 @@ private fun ReceiptScreen(
     record: RideRecord?,
     selectedTheme: MeshTheme,
     onGoHistory: () -> Unit,
+    onGoBack: () -> Unit,
     onGoHome: () -> Unit,
     onShredRecord: (RideRecord) -> Unit,
     onSettleRecord: (RideRecord) -> Unit
@@ -5953,13 +6044,13 @@ private fun ReceiptScreen(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    ReceiptGhostButton(text = "장부에 저장", modifier = Modifier.weight(1f), onClick = onGoHome)
+                    ReceiptGhostButton(text = "장부에 저장", modifier = Modifier.weight(1f), onClick = onGoBack)
                     ReceiptPrimaryButton(
                         text = "지금 정산하기",
                         modifier = Modifier.weight(1f),
                         onClick = {
                             onSettleRecord(item)
-                            onGoHome()
+                            onGoBack()
                         }
                     )
                     ReceiptShredIconButton(
@@ -5973,7 +6064,7 @@ private fun ReceiptScreen(
                     )
                 }
             } else {
-                ReceiptPrimaryButton(text = "장부에 저장", modifier = modifier, onClick = onGoHome)
+                ReceiptPrimaryButton(text = "장부에 저장", modifier = modifier, onClick = onGoBack)
             }
         }
     }
@@ -6019,7 +6110,7 @@ private fun ReceiptScreen(
                         onShredRecord(item)
                         shredSuccessVisible = true
                         kotlinx.coroutines.delay(900L)
-                        onGoHome()
+                        onGoBack()
                         kotlinx.coroutines.delay(300L)
                         shredSuccessVisible = false
                     }
@@ -7225,6 +7316,8 @@ private val HomePagerBottomPadding = 0.dp
 private val HomePagerSectionSpacing = 16.dp
 private val HomePagerIndicatorSlotHeight = 30.dp
 private val HomePagerIndicatorYOffset = (-8).dp
+private val QuickSettingsSupportHeight = 250.dp
+private val QuickSettingsSecondaryHeight = 172.dp
 
 private val AstaSans = FontFamily(
     Font(R.font.asta_sans_regular, FontWeight.Normal),

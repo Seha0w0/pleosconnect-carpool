@@ -5,7 +5,7 @@ plugins {
 
 android {
     namespace = "com.example.pleosconnect"
-    compileSdk = 35
+    compileSdk = 34
 
     defaultConfig {
         applicationId = "com.example.pleosconnect"
