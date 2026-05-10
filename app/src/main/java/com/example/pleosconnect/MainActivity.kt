@@ -50,6 +50,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -239,6 +240,7 @@ class MainActivity : ComponentActivity() {
     private var selectedTheme by mutableStateOf(MeshTheme.Aqua)
     private var userSelectedTheme by mutableStateOf(false)
     private var useCustomFare by mutableStateOf(false)
+    private var autoSurchargeEnabled by mutableStateOf(false)
     private var customBaseFare by mutableIntStateOf(4800)
     private var customStepFare by mutableIntStateOf(100)
     private var homeInitialPage by mutableIntStateOf(0)
@@ -321,6 +323,7 @@ class MainActivity : ComponentActivity() {
                 selectedSurcharge = selectedSurcharge,
                 selectedTheme = selectedTheme,
                 useCustomFare = useCustomFare,
+                autoSurchargeEnabled = autoSurchargeEnabled,
                 customBaseFare = customBaseFare,
                 customStepFare = customStepFare,
                 historyReturnScreen = historyReturnScreen,
@@ -357,17 +360,31 @@ class MainActivity : ComponentActivity() {
                 },
                 onGoFareSettings = { screen = AppScreen.FareModeSelect },
                 onGoRegionFareSettings = { screen = AppScreen.FareSettings },
-                onGoCustomFareSettings = { screen = AppScreen.CustomFareSettings },
+                onGoCustomFareSettings = {
+                    if (autoSurchargeEnabled) {
+                        autoSurchargeEnabled = false
+                        selectedSurcharge = SurchargeMode.Normal
+                        farePolicy = activeFarePolicy()
+                    }
+                    screen = AppScreen.CustomFareSettings
+                },
                 onGoThemeSettings = { screen = AppScreen.ThemeSettings },
                 onSelectRegion = {
                     useCustomFare = false
                     selectedRegion = it
+                    if (autoSurchargeEnabled) {
+                        selectedSurcharge = autoSurchargeModeFor(it, LocalTime.now())
+                    }
                     farePolicy = activeFarePolicy()
                     saveSelectedRegion(it)
                     saveUseCustomFare(false)
                     screen = AppScreen.Home
                 },
                 onSelectCustomFare = { baseFare, stepFare ->
+                    if (autoSurchargeEnabled) {
+                        selectedSurcharge = SurchargeMode.Normal
+                    }
+                    autoSurchargeEnabled = false
                     useCustomFare = true
                     customBaseFare = baseFare
                     customStepFare = stepFare
@@ -381,6 +398,23 @@ class MainActivity : ComponentActivity() {
                         farePolicy = activeFarePolicy()
                     }
                 },
+                onApplySmartSurcharge = {
+                    selectedSurcharge = it
+                    farePolicy = activeFarePolicy()
+                },
+                onAutoSurchargeChange = { enabled ->
+                    if (!enabled) {
+                        autoSurchargeEnabled = false
+                    } else if (useCustomFare) {
+                        autoSurchargeEnabled = false
+                        globalNoticeText = "커스텀 요금제를 선택한 상태에서는 작동하지 않는 기능입니다"
+                    } else {
+                        autoSurchargeEnabled = true
+                        selectedSurcharge = autoSurchargeModeFor(selectedRegion, LocalTime.now())
+                        farePolicy = activeFarePolicy()
+                    }
+                },
+                onShowNotice = { globalNoticeText = it },
                 onSelectTheme = {
                     selectedTheme = it
                     userSelectedTheme = true
@@ -899,6 +933,7 @@ private fun CarpoolMeterApp(
     selectedSurcharge: SurchargeMode,
     selectedTheme: MeshTheme,
     useCustomFare: Boolean,
+    autoSurchargeEnabled: Boolean,
     customBaseFare: Int,
     customStepFare: Int,
     historyReturnScreen: AppScreen,
@@ -925,6 +960,9 @@ private fun CarpoolMeterApp(
     onSelectRegion: (FareRegion) -> Unit,
     onSelectCustomFare: (Int, Int) -> Unit,
     onSelectSurcharge: (SurchargeMode) -> Unit,
+    onApplySmartSurcharge: (SurchargeMode) -> Unit,
+    onAutoSurchargeChange: (Boolean) -> Unit,
+    onShowNotice: (String) -> Unit,
     onSelectTheme: (MeshTheme) -> Unit,
     onTollChange: (String) -> Unit,
     onExtraChange: (String) -> Unit,
@@ -1028,6 +1066,8 @@ private fun CarpoolMeterApp(
                                 selectedRegion = selectedRegion,
                                 selectedSurcharge = selectedSurcharge,
                                 selectedTheme = selectedTheme,
+                                useCustomFare = useCustomFare,
+                                autoSurchargeEnabled = autoSurchargeEnabled,
                                 initialPage = homeInitialPage,
                                 records = records,
                                 passengerWidgets = passengerWidgets,
@@ -1042,6 +1082,9 @@ private fun CarpoolMeterApp(
                                 onGoFareSettings = onGoFareSettings,
                                 onGoThemeSettings = onGoThemeSettings,
                                 onSelectSurcharge = onSelectSurcharge,
+                                onApplySmartSurcharge = onApplySmartSurcharge,
+                                onAutoSurchargeChange = onAutoSurchargeChange,
+                                onShowNotice = onShowNotice,
                                 onOpenPassengerReceiptBoard = onOpenPassengerReceiptBoard,
                                 onGoChallenges = onGoChallenges,
                                 onGoInfo = onGoInfo,
@@ -1319,6 +1362,7 @@ private fun AppMeshBackground(selectedTheme: MeshTheme, overlayAlpha: Float = se
 
 @Composable
 private fun TopNotice(visible: Boolean, text: String) {
+    val longNotice = text.length >= 24
     AnimatedVisibility(
         visible = visible,
         modifier = Modifier
@@ -1336,7 +1380,7 @@ private fun TopNotice(visible: Boolean, text: String) {
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = G2RoundedCornerShape(30.dp),
-            colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.96f)),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
             elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
         ) {
             Row(
@@ -1348,12 +1392,19 @@ private fun TopNotice(visible: Boolean, text: String) {
                     contentAlignment = Alignment.Center
                 ) {
                     GlassIconContainer(
-                        symbol = "!",
-                        size = 58.dp,
-                        fontSize = 30.sp
+                        symbol = "⚠",
+                        size = if (longNotice) 50.dp else 58.dp,
+                        fontSize = if (longNotice) 25.sp else 30.sp
                     )
                 }
-                Text(text = text, color = DarkText, fontSize = 30.sp, fontWeight = FontWeight.Black)
+                Text(
+                    text = text,
+                    modifier = Modifier.weight(1f),
+                    color = DarkText,
+                    fontSize = if (longNotice) 23.sp else 30.sp,
+                    fontWeight = FontWeight.Black,
+                    maxLines = 1
+                )
             }
         }
     }
@@ -1372,6 +1423,8 @@ private fun HomeScreen(
     selectedRegion: FareRegion,
     selectedSurcharge: SurchargeMode,
     selectedTheme: MeshTheme,
+    useCustomFare: Boolean,
+    autoSurchargeEnabled: Boolean,
     initialPage: Int,
     records: List<RideRecord>,
     passengerWidgets: List<String>,
@@ -1386,6 +1439,9 @@ private fun HomeScreen(
     onGoFareSettings: () -> Unit,
     onGoThemeSettings: () -> Unit,
     onSelectSurcharge: (SurchargeMode) -> Unit,
+    onApplySmartSurcharge: (SurchargeMode) -> Unit,
+    onAutoSurchargeChange: (Boolean) -> Unit,
+    onShowNotice: (String) -> Unit,
     onOpenPassengerReceiptBoard: (String) -> Unit,
     onGoChallenges: () -> Unit,
     onGoInfo: () -> Unit,
@@ -1546,13 +1602,18 @@ private fun HomeScreen(
                             farePolicy = farePolicy,
                             selectedRegion = selectedRegion,
                             selectedSurcharge = selectedSurcharge,
+                            useCustomFare = useCustomFare,
+                            autoSurchargeEnabled = autoSurchargeEnabled,
                             currentPage = pagerState.currentPage,
                             onGoFareSettings = onGoFareSettings,
                             onGoThemeSettings = onGoThemeSettings,
                             onGoHistory = onGoHistory,
                             onGoInfo = onGoInfo,
                             onGoDonation = onGoDonation,
-                            onGoChallenges = onGoChallenges
+                            onGoChallenges = onGoChallenges,
+                            onApplySmartSurcharge = onApplySmartSurcharge,
+                            onAutoSurchargeChange = onAutoSurchargeChange,
+                            onShowNotice = onShowNotice
                         )
                     }
                 }
@@ -2806,16 +2867,19 @@ private fun HomeQuickSettingsPage(
     farePolicy: FarePolicy,
     selectedRegion: FareRegion,
     selectedSurcharge: SurchargeMode,
+    useCustomFare: Boolean,
+    autoSurchargeEnabled: Boolean,
     currentPage: Int,
     onGoFareSettings: () -> Unit,
     onGoThemeSettings: () -> Unit,
     onGoHistory: () -> Unit,
     onGoInfo: () -> Unit,
     onGoDonation: () -> Unit,
-    onGoChallenges: () -> Unit
+    onGoChallenges: () -> Unit,
+    onApplySmartSurcharge: (SurchargeMode) -> Unit,
+    onAutoSurchargeChange: (Boolean) -> Unit,
+    onShowNotice: (String) -> Unit
 ) {
-    var autoSurchargeEnabled by remember { mutableStateOf(false) }
-
     Column(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(HomePagerSectionSpacing)
@@ -2930,7 +2994,13 @@ private fun HomeQuickSettingsPage(
                 SmartSettingsCard(
                     modifier = Modifier.height(QuickSettingsSecondaryHeight),
                     autoSurchargeEnabled = autoSurchargeEnabled,
-                    onAutoSurchargeChange = { autoSurchargeEnabled = it }
+                    onAutoSurchargeChange = { enabled ->
+                        if (enabled && useCustomFare) {
+                            onShowNotice("커스텀 요금제를 선택한 상태에서는 작동하지 않는 기능입니다")
+                        } else {
+                            onAutoSurchargeChange(enabled)
+                        }
+                    }
                 )
 
                 DeveloperSupportBanner(
@@ -3354,7 +3424,7 @@ private fun AppInfoScreen(
                         verticalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = "1.0",
+                            text = "1.2",
                             color = Color.White,
                             fontSize = 96.sp,
                             fontWeight = FontWeight.Black,
@@ -3389,7 +3459,7 @@ private fun AppInfoScreen(
                 Column(
                     modifier = Modifier.padding(horizontal = 30.dp, vertical = 12.dp)
                 ) {
-                    AppInfoRow(title = "소프트웨어 버전", value = "1.0.0")
+                    AppInfoRow(title = "소프트웨어 버전", value = "v1.2.4")
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -7890,9 +7960,8 @@ private fun ReceiptScreen(
     }
 
     @Composable
-    fun ShredderLayer(
-        shredderModifier: Modifier,
-        toastModifier: Modifier
+    fun BoxScope.ShredderLayer(
+        shredderModifier: Modifier
     ) {
         ShredderSheet(
             visible = shredderVisible || shredding,
@@ -7925,10 +7994,10 @@ private fun ReceiptScreen(
                         shredPreparing = false
                         onShredRecord(item)
                         shredSuccessVisible = true
-                        kotlinx.coroutines.delay(900L)
-                        onGoBack()
-                        kotlinx.coroutines.delay(300L)
+                        kotlinx.coroutines.delay(1100L)
                         shredSuccessVisible = false
+                        kotlinx.coroutines.delay(220L)
+                        onGoBack()
                     }
                 }
             },
@@ -7943,7 +8012,10 @@ private fun ReceiptScreen(
 
         ShredSuccessToast(
             visible = shredSuccessVisible,
-            modifier = toastModifier
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = if (showDetailHeader) 86.dp else 28.dp)
+                .zIndex(9f)
         )
     }
 
@@ -7966,11 +8038,7 @@ private fun ReceiptScreen(
         ShredderLayer(
             shredderModifier = Modifier
                 .align(Alignment.BottomCenter)
-                .zIndex(8f),
-            toastModifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 96.dp)
-                .zIndex(9f)
+                .zIndex(8f)
         )
     }
 }
@@ -8269,11 +8337,11 @@ private fun ShredSuccessToast(visible: Boolean, modifier: Modifier = Modifier) {
         modifier = modifier,
         enter = slideInVertically(
             animationSpec = tween(durationMillis = 360, easing = FastOutSlowInEasing),
-            initialOffsetY = { it / 2 }
+            initialOffsetY = { -it - 24 }
         ) + fadeIn(animationSpec = tween(durationMillis = 240, easing = FastOutSlowInEasing)),
         exit = slideOutVertically(
             animationSpec = tween(durationMillis = 300, easing = FastOutSlowInEasing),
-            targetOffsetY = { it / 2 }
+            targetOffsetY = { -it - 24 }
         ) + fadeOut(animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing))
     ) {
         Box(
@@ -9249,6 +9317,42 @@ private enum class SurchargeMode(
     Forty("40% 할증", "40%", "할증 40%", 1.4f)
 }
 
+private fun autoSurchargeModeFor(region: FareRegion, time: LocalTime): SurchargeMode {
+    fun inRange(start: LocalTime, end: LocalTime): Boolean =
+        if (start < end) {
+            !time.isBefore(start) && time.isBefore(end)
+        } else {
+            !time.isBefore(start) || time.isBefore(end)
+        }
+
+    return when (region) {
+        FareRegion.SEOUL -> when {
+            inRange(LocalTime.of(23, 0), LocalTime.of(2, 0)) -> SurchargeMode.Forty
+            inRange(LocalTime.of(22, 0), LocalTime.of(23, 0)) -> SurchargeMode.Twenty
+            inRange(LocalTime.of(2, 0), LocalTime.of(4, 0)) -> SurchargeMode.Twenty
+            else -> SurchargeMode.Normal
+        }
+
+        FareRegion.GYEONGGI,
+        FareRegion.INCHEON,
+        FareRegion.BUSAN,
+        FareRegion.JEJU -> if (inRange(LocalTime.of(23, 0), LocalTime.of(4, 0))) {
+            SurchargeMode.Twenty
+        } else {
+            SurchargeMode.Normal
+        }
+
+        FareRegion.DAEGU,
+        FareRegion.GWANGJU,
+        FareRegion.DAEJEON,
+        FareRegion.ULSAN -> if (inRange(LocalTime.MIDNIGHT, LocalTime.of(4, 0))) {
+            SurchargeMode.Twenty
+        } else {
+            SurchargeMode.Normal
+        }
+    }
+}
+
 private enum class MeshTheme(
     val code: String,
     val displayName: String,
@@ -9287,14 +9391,14 @@ private enum class FareRegion(
     val nightLabel: String
 ) {
     SEOUL("seoul", "서울", 4800, 1.6f, 131f, 100, 1.2f, true, "22시 20%, 23-02시 40%"),
-    GYEONGGI("gyeonggi", "경기", 4800, 1.6f, 131f, 100, 1.2f, false, "22-04시 20%"),
-    INCHEON("incheon", "인천", 4800, 1.6f, 135f, 100, 1.2f, false, "22-04시 20%"),
-    BUSAN("busan", "부산", 4800, 2.0f, 132f, 100, 1.2f, false, "22-04시 20%"),
-    DAEGU("daegu", "대구", 4500, 1.6f, 130f, 100, 1.2f, false, "22-04시 20%"),
-    GWANGJU("gwangju", "광주", 4300, 1.8f, 134f, 100, 1.2f, false, "22-04시 20%"),
-    DAEJEON("daejeon", "대전", 4300, 1.8f, 132f, 100, 1.2f, false, "22-04시 20%"),
-    ULSAN("ulsan", "울산", 4500, 2.0f, 125f, 100, 1.2f, false, "22-04시 20%"),
-    JEJU("jeju", "제주", 4300, 2.0f, 126f, 100, 1.2f, false, "22-04시 20%")
+    GYEONGGI("gyeonggi", "경기", 4800, 1.6f, 131f, 100, 1.2f, false, "23-04시 20%"),
+    INCHEON("incheon", "인천", 4800, 1.6f, 135f, 100, 1.2f, false, "23-04시 20%"),
+    BUSAN("busan", "부산", 4800, 2.0f, 132f, 100, 1.2f, false, "23-04시 20%"),
+    DAEGU("daegu", "대구", 4500, 1.6f, 130f, 100, 1.2f, false, "00-04시 20%"),
+    GWANGJU("gwangju", "광주", 4300, 1.8f, 134f, 100, 1.2f, false, "00-04시 20%"),
+    DAEJEON("daejeon", "대전", 4300, 1.8f, 132f, 100, 1.2f, false, "00-04시 20%"),
+    ULSAN("ulsan", "울산", 4500, 2.0f, 125f, 100, 1.2f, false, "00-04시 20%"),
+    JEJU("jeju", "제주", 4300, 2.0f, 126f, 100, 1.2f, false, "23-04시 20%")
 }
 
 private fun Float.roundToNearestTen(): Int = (kotlin.math.round(this / 10f) * 10).toInt()
